@@ -1,4 +1,4 @@
-const BASE = '/api';
+const BASE = process.env.NEXT_PUBLIC_API_URL || 'https://hn-social.fly.dev/api';
 
 async function request(path: string, options: RequestInit = {}) {
   const token = typeof window !== 'undefined' ? localStorage.getItem('token') : null;
