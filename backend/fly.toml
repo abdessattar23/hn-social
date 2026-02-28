@@ -1,4 +1,4 @@
-app = 'hack-nation-api'
+app = '/hn-social'
 primary_region = 'fra'
 
 [build]
