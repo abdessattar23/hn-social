@@ -1,11 +1,12 @@
-app = '/hn-social'
-primary_region = 'fra'
+# fly.toml app configuration file generated for hn-social on 2026-02-28T21:24:04Z
+#
+# See https://fly.io/docs/reference/configuration/ for information about how to use this file.
+#
+
+app = 'hn-social'
+primary_region = 'iad'
 
 [build]
-
-[env]
-  NODE_ENV = 'production'
-  UPLOADS_DIR = '/data/uploads'
 
 [http_service]
   internal_port = 3001
@@ -14,10 +15,6 @@ primary_region = 'fra'
   auto_start_machines = true
   min_machines_running = 0
   processes = ['app']
-
-[mounts]
-  source = 'hack_nation_data'
-  destination = '/data'
 
 [[vm]]
   memory = '1gb'
