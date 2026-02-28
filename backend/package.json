@@ -1,0 +1,23 @@
+{
+  "name": "hack-nation-api",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "dev": "bun --watch src/index.ts",
+    "build": "bun build src/index.ts --outdir dist --target bun",
+    "start": "bun dist/index.js"
+  },
+  "dependencies": {
+    "hono": "^4.7.0",
+    "@hono/zod-validator": "^0.4.0",
+    "@supabase/supabase-js": "^2.49.0",
+    "zod": "^3.24.0",
+    "papaparse": "^5.4.1",
+    "croner": "^9.0.0"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.2.0",
+    "@types/papaparse": "^5.3.15",
+    "typescript": "^5.7.0"
+  }
+}

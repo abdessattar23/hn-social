@@ -1,0 +1,12 @@
+{
+  "name": "listlead",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "PATH=$HOME/.bun/bin:$PATH concurrently -k -n api,web -c blue,green \"cd backend && bun run build && bun dist/main.js\" \"sleep 3 && cd frontend && bun run dev\"",
+    "install:all": "cd backend && bun install && cd ../frontend && bun install"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.0"
+  }
+}

@@ -1,0 +1,12 @@
+node_modules
+dist
+.env
+.env.*
+!.env.example
+*.db
+uploads/*
+!uploads/.gitkeep
+.next
+.turbo
+.DS_Store
+bun.lock
