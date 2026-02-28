@@ -1,15 +1,15 @@
-# fly.toml app configuration file generated for hn-social on 2026-02-28T21:24:04Z
+# fly.toml app configuration file generated for hn-social on 2026-02-28T22:05:20Z
 #
 # See https://fly.io/docs/reference/configuration/ for information about how to use this file.
 #
 
 app = 'hn-social'
-primary_region = 'iad'
+primary_region = 'fra'
 
 [build]
 
 [http_service]
-  internal_port = 3001
+  internal_port = 8080
   force_https = true
   auto_stop_machines = 'stop'
   auto_start_machines = true
@@ -20,4 +20,4 @@ primary_region = 'iad'
   memory = '1gb'
   cpu_kind = 'shared'
   cpus = 1
-  memory_mb = 1024
+  memory_mb = 512
