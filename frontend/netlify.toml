@@ -1,0 +1,6 @@
+[build]
+  command = "npm run build"
+  publish = ".next"
+
+[build.environment]
+  BACKEND_URL = "https://hn-social.fly.dev"
