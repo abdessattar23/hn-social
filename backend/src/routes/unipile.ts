@@ -45,7 +45,16 @@ unipileRouter.get("/accounts", async (c) => {
     );
   }
 
-  return c.json(unipileItems);
+  // Re-fetch org accounts (including any just-inserted ones)
+  const { data: finalOrgAccounts } = await db
+    .from("connected_accounts")
+    .select("unipile_account_id")
+    .eq("org_id", user.orgId);
+
+  const orgIds = new Set((finalOrgAccounts || []).map((a: any) => a.unipile_account_id));
+  const filtered = unipileItems.filter((a) => orgIds.has(a.id as string));
+
+  return c.json(filtered);
 });
 
 unipileRouter.post("/connect", zValidator("json", connectAccountSchema), async (c) => {
