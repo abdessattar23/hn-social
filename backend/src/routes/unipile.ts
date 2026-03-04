@@ -160,6 +160,75 @@ unipileRouter.post("/register-account", async (c) => {
   return c.json(account, 201);
 });
 
+unipileRouter.post("/cleanup-accounts", async (c) => {
+  const user = c.get("user");
+
+  const { data: deleted } = await db
+    .from("connected_accounts")
+    .delete()
+    .eq("org_id", user.orgId)
+    .select("id");
+
+  return c.json({
+    cleared: (deleted || []).length,
+    message: "All connected accounts removed. Re-connect them from Settings.",
+  });
+});
+
+unipileRouter.post("/adopt-new-accounts", async (c) => {
+  const user = c.get("user");
+
+  let unipileItems: Record<string, unknown>[] = [];
+  try {
+    const allAccounts = await channelGateway.listAllUnipileAccounts();
+    unipileItems = (
+      (allAccounts as any).items || []
+    ) as Record<string, unknown>[];
+  } catch {
+    return c.json({ adopted: [] });
+  }
+
+  if (!unipileItems.length) return c.json({ adopted: [] });
+
+  const { data: allClaimed } = await db
+    .from("connected_accounts")
+    .select("unipile_account_id");
+
+  const claimedIds = new Set(
+    (allClaimed || []).map((r: any) => r.unipile_account_id),
+  );
+
+  const unclaimed = unipileItems.filter(
+    (a) => !claimedIds.has(a.id as string),
+  );
+
+  if (!unclaimed.length) return c.json({ adopted: [] });
+
+  const { data: existing } = await db
+    .from("connected_accounts")
+    .select("id")
+    .eq("org_id", user.orgId);
+
+  const remaining = ACCOUNT_CAPACITY_THRESHOLD - (existing || []).length;
+  const toAdopt = unclaimed.slice(0, Math.max(0, remaining));
+
+  if (!toAdopt.length) return c.json({ adopted: [] });
+
+  const { data: adopted } = await db
+    .from("connected_accounts")
+    .insert(
+      toAdopt.map((a) => ({
+        org_id: user.orgId,
+        unipile_account_id: a.id as string,
+        provider: ((a.type as string) || "UNKNOWN").toUpperCase(),
+        display_name: (a.name as string) || null,
+      })),
+    )
+    .select();
+
+  return c.json({ adopted: adopted || [] });
+});
+
 unipileRouter.delete("/accounts/:id", async (c) => {
   const user = c.get("user");
   const unipileAccountId = c.req.param("id");

@@ -1,5 +1,6 @@
 'use client';
 import { useEffect, useState } from 'react';
+import { useSearchParams, useRouter } from 'next/navigation';
 import { api } from '@/lib/api';
 import { useRequireAuth } from '@/lib/useRequireAuth';
 import { useToast } from '@/components/toast';
@@ -33,6 +34,8 @@ const EMAIL_PROVIDERS = [
 export default function SettingsPage() {
   const { authed } = useRequireAuth();
   const { showToast } = useToast();
+  const searchParams = useSearchParams();
+  const router = useRouter();
 
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [aliases, setAliases] = useState<Record<string, string>>({});
@@ -50,7 +53,24 @@ export default function SettingsPage() {
 
   useEffect(() => {
     if (!authed) return;
-    loadAccounts(); loadAliases(); loadSignatures(); loadSendLimit();
+    const isOAuthCallback = searchParams.get('unipile_connected') === '1';
+    if (isOAuthCallback) {
+      api.post('/unipile/adopt-new-accounts')
+        .then((res: any) => {
+          const adopted = res?.adopted || [];
+          if (adopted.length) {
+            showToast(`Account connected successfully!`);
+          }
+          loadAccounts();
+        })
+        .catch(() => loadAccounts())
+        .finally(() => {
+          router.replace('/settings', { scroll: false });
+        });
+      loadAliases(); loadSignatures(); loadSendLimit();
+    } else {
+      loadAccounts(); loadAliases(); loadSignatures(); loadSendLimit();
+    }
   }, [authed]);
 
   const loadAccounts = async () => { try { const d = await api.get('/unipile/accounts'); setAccounts(d.items || d || []); } catch (err: any) { setPageError(err.message || 'Failed to load accounts'); } };

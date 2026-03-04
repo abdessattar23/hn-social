@@ -159,7 +159,7 @@ class ExternalChannelGateway implements LifecycleAware {
         type: "create",
         providers: [type.toUpperCase()],
         api_url: this.config.baseUrl,
-        success_redirect_url: `${this.config.frontendUrl}/settings`,
+        success_redirect_url: `${this.config.frontendUrl}/settings?unipile_connected=1`,
         expiresOn: new Date(Date.now() + 3_600_000).toISOString(),
       },
     });
