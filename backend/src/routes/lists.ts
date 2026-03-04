@@ -222,6 +222,7 @@ lists.delete("/:id/contacts/:contactId", async (c) => {
 lists.post("/:id/import-csv", async (c) => {
   const user = c.get("user");
   const id = Number(c.req.param("id"));
+  const bypassLimit = c.req.query("bypass_limit") === "true";
   const manifest = await materializeAudienceManifest(
     id,
     user.orgId,
@@ -254,12 +255,95 @@ lists.post("/:id/import-csv", async (c) => {
     }
   }
 
-  if (candidateContacts.length) {
-    const { error } = await db.from("contacts").insert(candidateContacts);
-    if (error) throw new BadRequestError(error.message);
+  if (candidateContacts.length === 0) {
+    return c.json({ imported: 0, lists: [] });
   }
 
-  return c.json({ imported: candidateContacts.length });
+  let dailySendLimit: number | null = null;
+  if (!bypassLimit) {
+    const { data: org } = await db
+      .from("organizations")
+      .select("daily_send_limit")
+      .eq("id", user.orgId)
+      .single();
+    dailySendLimit = org?.daily_send_limit ?? null;
+  }
+
+  const existingCount = (manifest.contacts || []).length;
+  const effectiveLimit = dailySendLimit
+    ? Math.max(0, dailySendLimit - existingCount)
+    : null;
+
+  const shouldSplit =
+    effectiveLimit !== null && candidateContacts.length > effectiveLimit;
+
+  if (!shouldSplit) {
+    if (candidateContacts.length) {
+      const { error } = await db.from("contacts").insert(candidateContacts);
+      if (error) throw new BadRequestError(error.message);
+    }
+    return c.json({ imported: candidateContacts.length, lists: [] });
+  }
+
+  const chunks: NormalizedContactPayload[][] = [];
+  const firstChunkSize = effectiveLimit;
+  if (firstChunkSize > 0) {
+    chunks.push(candidateContacts.slice(0, firstChunkSize));
+  }
+  const remaining = candidateContacts.slice(firstChunkSize);
+  for (let i = 0; i < remaining.length; i += dailySendLimit!) {
+    chunks.push(remaining.slice(i, i + dailySendLimit!));
+  }
+
+  const createdLists: Array<{ id: number; name: string; count: number }> = [];
+
+  if (chunks[0] && chunks[0].length > 0) {
+    const { error } = await db.from("contacts").insert(chunks[0]);
+    if (error) throw new BadRequestError(error.message);
+    createdLists.push({
+      id: manifest.id,
+      name: manifest.name,
+      count: chunks[0].length,
+    });
+  }
+
+  for (let i = 1; i < chunks.length; i++) {
+    const partName = `${manifest.name} (Part ${i + (firstChunkSize > 0 ? 1 : 0)})`;
+    const { data: newList, error: listErr } = await db
+      .from("contact_lists")
+      .insert({
+        name: partName,
+        type: manifest.type,
+        org_id: user.orgId,
+        user_id: user.id,
+        tags: manifest.tags || [],
+      })
+      .select()
+      .single();
+    if (listErr) throw new BadRequestError(listErr.message);
+
+    const contactsForList = chunks[i].map((contact) => ({
+      ...contact,
+      list_id: newList.id,
+    }));
+    const { error: insErr } = await db
+      .from("contacts")
+      .insert(contactsForList);
+    if (insErr) throw new BadRequestError(insErr.message);
+
+    createdLists.push({
+      id: newList.id,
+      name: partName,
+      count: contactsForList.length,
+    });
+  }
+
+  return c.json({
+    imported: candidateContacts.length,
+    split: true,
+    dailySendLimit,
+    lists: createdLists,
+  });
 });
 
 lists.post("/:id/import-whatsapp-csv", async (c) => {

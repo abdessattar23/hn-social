@@ -44,10 +44,13 @@ export default function SettingsPage() {
   const [loading, setLoading] = useState(false);
   const [pageError, setPageError] = useState('');
   const [emailDropdownOpen, setEmailDropdownOpen] = useState(false);
+  const [dailySendLimit, setDailySendLimit] = useState<number | null>(null);
+  const [sendLimitInput, setSendLimitInput] = useState('');
+  const [savingLimit, setSavingLimit] = useState(false);
 
   useEffect(() => {
     if (!authed) return;
-    loadAccounts(); loadAliases(); loadSignatures();
+    loadAccounts(); loadAliases(); loadSignatures(); loadSendLimit();
   }, [authed]);
 
   const loadAccounts = async () => { try { const d = await api.get('/unipile/accounts'); setAccounts(d.items || d || []); } catch (err: any) { setPageError(err.message || 'Failed to load accounts'); } };
@@ -56,6 +59,28 @@ export default function SettingsPage() {
   const loadSignatures = async () => { try { const d = await api.get('/org/account-signatures'); setSignatures(d || {}); } catch (err: any) { setPageError(err.message || 'Failed to load signatures'); } };
   const saveSignature = async (accountId: string) => { try { const d = await api.patch('/org/account-signature', { accountId, signature: signatureInput }); setSignatures(d || {}); setEditingSignature(null); } catch (err: any) { setPageError(err.message || 'Failed to save signature'); } };
   const disconnectAccount = async (accountId: string, name: string) => { if (!confirm(`Disconnect "${name}"?`)) return; try { await api.del(`/unipile/accounts/${accountId}`); loadAccounts(); } catch (e: any) { alert(e.message); } };
+  const loadSendLimit = async () => {
+    try {
+      const d = await api.get('/org/send-limit');
+      setDailySendLimit(d.dailySendLimit);
+      setSendLimitInput(d.dailySendLimit ? String(d.dailySendLimit) : '');
+    } catch (err: any) { setPageError(err.message || 'Failed to load send limit'); }
+  };
+  const saveSendLimit = async () => {
+    setSavingLimit(true);
+    try {
+      const value = sendLimitInput.trim() === '' ? null : Number(sendLimitInput);
+      if (value !== null && (isNaN(value) || value < 1)) {
+        showToast('Enter a valid number or leave empty for unlimited.');
+        setSavingLimit(false);
+        return;
+      }
+      const d = await api.patch('/org/send-limit', { dailySendLimit: value });
+      setDailySendLimit(d.dailySendLimit);
+      showToast(value ? `Daily send limit set to ${value}` : 'Daily send limit removed');
+    } catch (err: any) { setPageError(err.message || 'Failed to save send limit'); }
+    finally { setSavingLimit(false); }
+  };
 
   const hasWhatsApp = accounts.some((a) => WHATSAPP_TYPES.includes(a.type));
   const hasLinkedIn = accounts.some((a) => LINKEDIN_TYPES.includes(a.type));
@@ -297,6 +322,53 @@ export default function SettingsPage() {
             </div>
           </StaggerItem>
         )}
+        {/* Sending Limits */}
+        <StaggerItem>
+          <div className="rounded-2xl bg-surface p-6 shadow-1 border border-stroke/60">
+            <h2 className="text-base font-semibold text-dark mb-1">Sending Limits</h2>
+            <p className="text-sm text-dark-5 mb-5">
+              Set a daily send limit per provider (e.g. Gmail allows ~300/day). When importing a CSV with more contacts than the limit, lists are automatically split into smaller sublists.
+            </p>
+            <div className="flex items-end gap-3">
+              <div className="flex-1 max-w-xs">
+                <label className="text-xs font-medium text-dark-5 uppercase tracking-wider block mb-2">Daily Send Limit</label>
+                <input
+                  type="number"
+                  min="1"
+                  placeholder="Unlimited"
+                  value={sendLimitInput}
+                  onChange={(e) => setSendLimitInput(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === 'Enter') saveSendLimit(); }}
+                  className="w-full border border-stroke rounded-xl px-4 py-2.5 text-sm outline-none focus:border-primary bg-surface-2 transition-all duration-200"
+                />
+              </div>
+              <motion.button
+                whileHover={{ scale: 1.03 }}
+                whileTap={{ scale: 0.97 }}
+                onClick={saveSendLimit}
+                disabled={savingLimit}
+                className="bg-primary hover:bg-accent text-white rounded-xl px-5 py-2.5 text-sm font-medium disabled:opacity-50 transition-all duration-200"
+              >
+                {savingLimit ? 'Saving...' : 'Save'}
+              </motion.button>
+              {dailySendLimit && (
+                <motion.button
+                  whileHover={{ scale: 1.03 }}
+                  whileTap={{ scale: 0.97 }}
+                  onClick={() => { setSendLimitInput(''); setDailySendLimit(null); api.patch('/org/send-limit', { dailySendLimit: null }); showToast('Daily send limit removed'); }}
+                  className="text-red hover:text-red/80 text-sm font-medium transition-colors"
+                >
+                  Remove
+                </motion.button>
+              )}
+            </div>
+            {dailySendLimit && (
+              <p className="text-xs text-dark-5 mt-3">
+                Current limit: <span className="font-medium text-dark">{dailySendLimit} emails/day</span>. CSV imports with more contacts will be auto-split into sublists of {dailySendLimit}.
+              </p>
+            )}
+          </div>
+        </StaggerItem>
       </StaggerContainer>
     </AnimatedPage>
   );

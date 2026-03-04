@@ -63,6 +63,12 @@ const OrganizationMutationSchemas = {
     }),
     "organization",
   ),
+  updateSendLimit: registerSchema(
+    z.object({
+      dailySendLimit: z.number().int().min(1).max(100000).nullable(),
+    }),
+    "organization",
+  ),
 } as const;
 
 const AudienceManifestSchemas = {
@@ -237,6 +243,7 @@ export const loginSchema = CredentialValidationPipeline.schema;
 export const updateOrgNameSchema = OrganizationMutationSchemas.updateName.schema;
 export const updateAccountAliasSchema = OrganizationMutationSchemas.updateAccountAlias.schema;
 export const updateAccountSignatureSchema = OrganizationMutationSchemas.updateAccountSignature.schema;
+export const updateSendLimitSchema = OrganizationMutationSchemas.updateSendLimit.schema;
 export const createListSchema = AudienceManifestSchemas.createList.schema;
 export const addContactSchema = AudienceManifestSchemas.addContact.schema;
 export const addChatsSchema = AudienceManifestSchemas.addChats.schema;

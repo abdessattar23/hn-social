@@ -50,6 +50,8 @@ export default function ListDetailPage() {
   const [allTags, setAllTags] = useState<string[]>([]);
   const [selected, setSelected] = useState<Set<number>>(new Set());
   const [deleting, setDeleting] = useState(false);
+  const [bypassLimit, setBypassLimit] = useState(false);
+  const [splitResult, setSplitResult] = useState<{ imported: number; split?: boolean; dailySendLimit?: number; lists: Array<{ id: number; name: string; count: number }> } | null>(null);
 
   useEffect(() => {
     if (!authed) return;
@@ -96,12 +98,20 @@ export default function ListDetailPage() {
     const file = e.target.files?.[0];
     if (!file) return;
     setError('');
+    setSplitResult(null);
     try {
       const form = new FormData();
       form.append('file', file);
-      const endpoint = list?.type === 'WHATSAPP' ? `/lists/${id}/import-whatsapp-csv` : `/lists/${id}/import-csv`;
+      const isWhatsApp = list?.type === 'WHATSAPP';
+      const endpoint = isWhatsApp
+        ? `/lists/${id}/import-whatsapp-csv`
+        : `/lists/${id}/import-csv${bypassLimit ? '?bypass_limit=true' : ''}`;
       const result = await api.upload(endpoint, form);
-      alert(`Imported ${result.imported} contacts`);
+      if (result.split && result.lists?.length > 0) {
+        setSplitResult(result);
+      } else {
+        alert(`Imported ${result.imported} contacts`);
+      }
       load();
     } catch (err: any) {
       setError(err.message || 'Failed to import CSV');
@@ -220,6 +230,31 @@ export default function ListDetailPage() {
 
       {error && <p className="text-red text-sm mb-4">{error}</p>}
 
+      {/* Split result notification */}
+      {splitResult && (
+        <div className="rounded-2xl bg-blue-light-5 border border-blue/20 p-5 mb-6">
+          <div className="flex items-start justify-between">
+            <div>
+              <h3 className="text-sm font-semibold text-dark mb-1">CSV auto-split into {splitResult.lists.length} lists</h3>
+              <p className="text-xs text-dark-5 mb-3">
+                Your {splitResult.imported} contacts were split into sublists of {splitResult.dailySendLimit} to match your daily send limit.
+              </p>
+              <div className="space-y-1">
+                {splitResult.lists.map((l) => (
+                  <a key={l.id} href={`/lists/${l.id}`} className="flex items-center gap-2 text-sm text-primary hover:underline">
+                    <span>{l.name}</span>
+                    <span className="text-xs text-dark-5">({l.count} contacts)</span>
+                  </a>
+                ))}
+              </div>
+            </div>
+            <button onClick={() => setSplitResult(null)} className="text-dark-5 hover:text-dark shrink-0 ml-3">
+              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M6 18 18 6M6 6l12 12" /></svg>
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Empty state */}
       {(list.contacts?.length || 0) === 0 && !showChatPicker && (
         <div className="rounded-2xl bg-surface p-8 shadow-1 mb-6 text-center">
@@ -230,11 +265,17 @@ export default function ListDetailPage() {
               ? 'Add WhatsApp groups to this list. Select from your connected groups or import a CSV.'
               : 'Add LinkedIn contacts to this list. Select from your connections or import a CSV.'}
           </p>
-          <div className="flex gap-3 justify-center">
+          <div className="flex gap-3 justify-center items-center">
             <label className="bg-gray-2 text-dark-5 rounded-lg px-4 py-2 text-sm cursor-pointer hover:bg-gray-3 transition-colors">
               Import CSV
               <input type="file" accept=".csv" onChange={handleCsvUpload} className="hidden" />
             </label>
+            {list.type === 'EMAIL' && (
+              <label className="flex items-center gap-1.5 text-xs text-dark-5 cursor-pointer select-none">
+                <input type="checkbox" checked={bypassLimit} onChange={(e) => setBypassLimit(e.target.checked)} className="accent-primary" />
+                Bypass send limit
+              </label>
+            )}
             {list.type === 'WHATSAPP' && (
               <button onClick={loadChats} disabled={loadingChats} className="bg-green text-white rounded-lg px-4 py-2 text-sm font-medium hover:bg-opacity-90 disabled:opacity-50 transition">
                 {loadingChats ? 'Loading...' : 'Select WhatsApp Groups'}
@@ -251,19 +292,25 @@ export default function ListDetailPage() {
 
       {/* Action buttons when list has contacts */}
       {(list.contacts?.length || 0) > 0 && (
-        <div className="flex gap-3 mb-6 mt-4 flex-wrap">
+        <div className="flex gap-3 mb-6 mt-4 flex-wrap items-center">
           <label className="bg-gray-2 text-dark-5 rounded-lg px-4 py-2 text-sm cursor-pointer hover:bg-gray-3 transition-colors">
             Import CSV
             <input type="file" accept=".csv" onChange={handleCsvUpload} className="hidden" />
           </label>
+          {list.type === 'EMAIL' && (
+            <label className="flex items-center gap-1.5 text-xs text-dark-5 cursor-pointer select-none">
+              <input type="checkbox" checked={bypassLimit} onChange={(e) => setBypassLimit(e.target.checked)} className="accent-primary" />
+              Bypass send limit
+            </label>
+          )}
           {list.type === 'WHATSAPP' && (
-<button onClick={loadChats} disabled={loadingChats} className="bg-green text-white rounded-lg px-4 py-2 text-sm font-medium hover:bg-opacity-90 disabled:opacity-50 transition">
-            {loadingChats ? 'Loading...' : 'Select WhatsApp Groups'}
+            <button onClick={loadChats} disabled={loadingChats} className="bg-green text-white rounded-lg px-4 py-2 text-sm font-medium hover:bg-opacity-90 disabled:opacity-50 transition">
+              {loadingChats ? 'Loading...' : 'Select WhatsApp Groups'}
             </button>
           )}
           {list.type === 'LINKEDIN' && (
-<button onClick={loadChats} disabled={loadingChats} className="bg-linkedin text-white rounded-lg px-4 py-2 text-sm font-medium hover:bg-opacity-90 disabled:opacity-50 transition">
-            {loadingChats ? 'Loading...' : 'Select LinkedIn Connections'}
+            <button onClick={loadChats} disabled={loadingChats} className="bg-linkedin text-white rounded-lg px-4 py-2 text-sm font-medium hover:bg-opacity-90 disabled:opacity-50 transition">
+              {loadingChats ? 'Loading...' : 'Select LinkedIn Connections'}
             </button>
           )}
         </div>

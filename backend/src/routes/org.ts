@@ -6,6 +6,7 @@ import {
   updateOrgNameSchema,
   updateAccountAliasSchema,
   updateAccountSignatureSchema,
+  updateSendLimitSchema,
 } from "../lib/validation";
 import { NotFoundError, ForbiddenError, BadRequestError } from "../lib/errors";
 import { randomBytes } from "crypto";
@@ -191,6 +192,32 @@ org.patch(
       signature || undefined,
     );
     return c.json(result);
+  },
+);
+
+org.get("/send-limit", async (c) => {
+  const user = c.get("user");
+  const { data, error } = await db
+    .from("organizations")
+    .select("daily_send_limit")
+    .eq("id", user.orgId)
+    .single();
+  if (error) throw new BadRequestError(error.message);
+  return c.json({ dailySendLimit: data?.daily_send_limit ?? null });
+});
+
+org.patch(
+  "/send-limit",
+  zValidator("json", updateSendLimitSchema),
+  async (c) => {
+    const user = c.get("user");
+    const { dailySendLimit } = c.req.valid("json");
+    const { error } = await db
+      .from("organizations")
+      .update({ daily_send_limit: dailySendLimit })
+      .eq("id", user.orgId);
+    if (error) throw new BadRequestError(error.message);
+    return c.json({ dailySendLimit });
   },
 );
 
