@@ -30,21 +30,6 @@ const synchronizeAccountInventory = async (
   upstreamAccounts: Record<string, unknown>[],
   knownAccountIds: Set<string>,
 ): Promise<void> => {
-  const newAccounts = upstreamAccounts.filter(
-    (a) => !knownAccountIds.has(a.id as string),
-  );
-
-  if (newAccounts.length) {
-    await db.from("connected_accounts").insert(
-      newAccounts.map((a) => ({
-        org_id: orgId,
-        unipile_account_id: a.id as string,
-        provider: ((a.type as string) || "UNKNOWN").toUpperCase(),
-        display_name: (a.name as string) || null,
-      })),
-    );
-  }
-
   const upstreamIds = new Set(
     upstreamAccounts.map((a) => a.id as string),
   );
@@ -102,18 +87,8 @@ unipileRouter.get("/accounts", async (c) => {
     knownIds,
   );
 
-  const { data: finalOrgAccounts } = await db
-    .from("connected_accounts")
-    .select("unipile_account_id")
-    .eq("org_id", user.orgId);
-
-  const orgIds = new Set(
-    (finalOrgAccounts || []).map(
-      (a: any) => a.unipile_account_id,
-    ),
-  );
   const filtered = unipileItems.filter((a) =>
-    orgIds.has(a.id as string),
+    knownIds.has(a.id as string),
   );
 
   return c.json(filtered);
