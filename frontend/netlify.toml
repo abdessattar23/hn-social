@@ -1,0 +1,10 @@
+[build]
+  command = "npm run build"
+  publish = ".next"
+
+[build.environment]
+  BACKEND_URL = "https://hn-social.fly.dev"
+  NEXT_PUBLIC_API_URL = "https://hn-social.fly.dev/api"
+
+[[plugins]]
+  package = "@netlify/plugin-nextjs"
