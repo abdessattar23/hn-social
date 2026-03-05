@@ -54,13 +54,15 @@ export default function SettingsPage() {
   useEffect(() => {
     if (!authed) return;
     const isOAuthCallback = searchParams.get('unipile_connected') === '1';
+    const callbackAccountId = searchParams.get('account_id');
     if (isOAuthCallback) {
-      api.post('/unipile/adopt-new-accounts')
-        .then((res: any) => {
-          const adopted = res?.adopted || [];
-          if (adopted.length) {
-            showToast(`Account connected successfully!`);
-          }
+      const registerAccount = callbackAccountId
+        ? api.post('/unipile/register-callback', { accountId: callbackAccountId })
+        : api.post('/unipile/adopt-new-accounts');
+
+      registerAccount
+        .then(() => {
+          showToast('Account connected successfully!');
           loadAccounts();
         })
         .catch(() => loadAccounts())

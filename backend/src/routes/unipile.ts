@@ -160,19 +160,62 @@ unipileRouter.post("/register-account", async (c) => {
   return c.json(account, 201);
 });
 
-unipileRouter.post("/cleanup-accounts", async (c) => {
+unipileRouter.post("/register-callback", async (c) => {
   const user = c.get("user");
+  const { accountId } = await c.req.json<{ accountId: string }>();
 
-  const { data: deleted } = await db
+  if (!accountId) {
+    throw new BadRequestError("accountId is required");
+  }
+
+  const { data: alreadyLinked } = await db
     .from("connected_accounts")
-    .delete()
-    .eq("org_id", user.orgId)
-    .select("id");
+    .select("*")
+    .eq("unipile_account_id", accountId)
+    .maybeSingle();
 
-  return c.json({
-    cleared: (deleted || []).length,
-    message: "All connected accounts removed. Re-connect them from Settings.",
-  });
+  if (alreadyLinked) {
+    if (alreadyLinked.org_id !== user.orgId) {
+      throw new BadRequestError(
+        "Account already linked to another organization",
+      );
+    }
+    return c.json(alreadyLinked);
+  }
+
+  const { data: orgAccounts } = await db
+    .from("connected_accounts")
+    .select("id")
+    .eq("org_id", user.orgId);
+
+  if ((orgAccounts || []).length >= ACCOUNT_CAPACITY_THRESHOLD) {
+    throw new BadRequestError(
+      "Account limit reached. Maximum 6 accounts per organization.",
+    );
+  }
+
+  let provider = "UNKNOWN";
+  let displayName: string | null = null;
+  try {
+    const acct = await channelGateway.getUnipileAccount(accountId);
+    provider = ((acct.type as string) || "UNKNOWN").toUpperCase();
+    displayName = (acct.name as string) || null;
+  } catch {
+    // Unipile may not have provisioned yet; store with UNKNOWN and it'll update on next sync
+  }
+
+  const { data: account } = await db
+    .from("connected_accounts")
+    .insert({
+      org_id: user.orgId,
+      unipile_account_id: accountId,
+      provider,
+      display_name: displayName,
+    })
+    .select()
+    .single();
+
+  return c.json(account, 201);
 });
 
 unipileRouter.post("/adopt-new-accounts", async (c) => {

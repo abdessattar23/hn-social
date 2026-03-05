@@ -144,6 +144,13 @@ class ExternalChannelGateway implements LifecycleAware {
     return this.executeTransport({ method: "GET", path: "/accounts" });
   }
 
+  async getUnipileAccount(accountId: string) {
+    return this.executeTransport<Record<string, unknown>>({
+      method: "GET",
+      path: `/accounts/${encodeURIComponent(accountId)}`,
+    });
+  }
+
   async deleteUnipileAccount(accountId: string) {
     return this.executeTransport({
       method: "DELETE",
@@ -409,6 +416,8 @@ const channelGatewayInstance = new ExternalChannelGateway();
 
 export const listAllUnipileAccounts = () =>
   channelGatewayInstance.listAllUnipileAccounts();
+export const getUnipileAccount = (accountId: string) =>
+  channelGatewayInstance.getUnipileAccount(accountId);
 export const deleteUnipileAccount = (accountId: string) =>
   channelGatewayInstance.deleteUnipileAccount(accountId);
 export const getHostedAuthLink = (type: string) =>
