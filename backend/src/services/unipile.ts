@@ -381,6 +381,43 @@ class ExternalChannelGateway implements LifecycleAware {
     return this.executeFormTransport("POST", "/chats", form);
   }
 
+  async findChatByAttendee(
+    attendeeProviderId: string,
+    accountId?: string,
+  ): Promise<string | null> {
+    try {
+      const qs = new URLSearchParams();
+      if (accountId) qs.set("account_id", accountId);
+      const suffix = qs.toString() ? `?${qs}` : "";
+      const data = await this.executeTransport<
+        { items?: { id: string }[] } | { id: string }[]
+      >({
+        method: "GET",
+        path: `/chat_attendees/${encodeURIComponent(attendeeProviderId)}/chats${suffix}`,
+      });
+      const chats = Array.isArray(data) ? data : data.items || [];
+      return chats.length > 0 ? chats[0].id : null;
+    } catch {
+      return null;
+    }
+  }
+
+  async sendMessageToUser(
+    accountId: string,
+    attendeeProviderId: string,
+    text: string,
+    attachmentPaths?: string[],
+  ) {
+    const existingChatId = await this.findChatByAttendee(
+      attendeeProviderId,
+      accountId,
+    );
+    if (existingChatId) {
+      return this.sendChatMessage(existingChatId, text, attachmentPaths);
+    }
+    return this.startNewChat(accountId, attendeeProviderId, text, attachmentPaths);
+  }
+
   async linkedinSearch(
     accountId: string,
     params: Record<string, unknown>,
@@ -479,6 +516,22 @@ export const startNewChat = (
   attachmentPaths?: string[],
 ) =>
   channelGatewayInstance.startNewChat(
+    accountId,
+    attendeeProviderId,
+    text,
+    attachmentPaths,
+  );
+export const findChatByAttendee = (
+  attendeeProviderId: string,
+  accountId?: string,
+) => channelGatewayInstance.findChatByAttendee(attendeeProviderId, accountId);
+export const sendMessageToUser = (
+  accountId: string,
+  attendeeProviderId: string,
+  text: string,
+  attachmentPaths?: string[],
+) =>
+  channelGatewayInstance.sendMessageToUser(
     accountId,
     attendeeProviderId,
     text,
