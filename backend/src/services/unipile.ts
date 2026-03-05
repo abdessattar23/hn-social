@@ -363,6 +363,24 @@ class ExternalChannelGateway implements LifecycleAware {
     );
   }
 
+  async startNewChat(
+    accountId: string,
+    attendeeProviderId: string,
+    text: string,
+    attachmentPaths?: string[],
+  ) {
+    const form = new FormData();
+    form.append("account_id", accountId);
+    form.append("attendees_ids", attendeeProviderId);
+    form.append("text", text);
+
+    if (attachmentPaths?.length) {
+      this.attachFilesToForm(form, attachmentPaths);
+    }
+
+    return this.executeFormTransport("POST", "/chats", form);
+  }
+
   async linkedinSearch(
     accountId: string,
     params: Record<string, unknown>,
@@ -454,6 +472,18 @@ export const sendChatMessage = (
   text: string,
   attachmentPaths?: string[],
 ) => channelGatewayInstance.sendChatMessage(chatId, text, attachmentPaths);
+export const startNewChat = (
+  accountId: string,
+  attendeeProviderId: string,
+  text: string,
+  attachmentPaths?: string[],
+) =>
+  channelGatewayInstance.startNewChat(
+    accountId,
+    attendeeProviderId,
+    text,
+    attachmentPaths,
+  );
 export const linkedinSearch = (
   accountId: string,
   params: Record<string, unknown>,

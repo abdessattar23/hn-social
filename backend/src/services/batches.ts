@@ -605,7 +605,8 @@ async function executeMessageDispatchPipeline(batch: any) {
     );
 
     try {
-      await unipile.sendChatMessage(
+      await unipile.startNewChat(
+        batch.account_id,
         contact.provider_id,
         personalizedMessage,
       );
