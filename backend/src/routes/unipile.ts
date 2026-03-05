@@ -112,7 +112,7 @@ unipileRouter.post(
       );
     }
 
-    const result = await channelGateway.getHostedAuthLink(type);
+    const result = await channelGateway.getHostedAuthLink(type, user.orgId);
     return c.json(result);
   },
 );

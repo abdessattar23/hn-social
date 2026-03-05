@@ -8,6 +8,7 @@ interface ChannelGatewayConfiguration {
   readonly baseUrl: string;
   readonly apiKey: string;
   readonly frontendUrl: string;
+  readonly backendUrl: string;
   readonly requestTimeoutMs: number;
 }
 
@@ -28,6 +29,7 @@ const resolveGatewayConfiguration = (): ChannelGatewayConfiguration => ({
   baseUrl: process.env.UNIPILE_DSN || "",
   apiKey: process.env.UNIPILE_API_KEY || "",
   frontendUrl: process.env.FRONTEND_URL || "http://localhost:3000",
+  backendUrl: process.env.BACKEND_URL || "http://localhost:3001",
   requestTimeoutMs: 30_000,
 });
 
@@ -158,17 +160,24 @@ class ExternalChannelGateway implements LifecycleAware {
     });
   }
 
-  async getHostedAuthLink(type: string) {
+  async getHostedAuthLink(type: string, orgId?: number) {
+    const body: Record<string, unknown> = {
+      type: "create",
+      providers: [type.toUpperCase()],
+      api_url: this.config.baseUrl,
+      success_redirect_url: `${this.config.frontendUrl}/settings?unipile_connected=1`,
+      expiresOn: new Date(Date.now() + 3_600_000).toISOString(),
+    };
+
+    if (orgId != null) {
+      body.notify_url = `${this.config.backendUrl}/api/unipile/notify`;
+      body.name = String(orgId);
+    }
+
     return this.executeTransport({
       method: "POST",
       path: "/hosted/accounts/link",
-      body: {
-        type: "create",
-        providers: [type.toUpperCase()],
-        api_url: this.config.baseUrl,
-        success_redirect_url: `${this.config.frontendUrl}/settings?unipile_connected=1`,
-        expiresOn: new Date(Date.now() + 3_600_000).toISOString(),
-      },
+      body,
     });
   }
 
@@ -420,8 +429,8 @@ export const getUnipileAccount = (accountId: string) =>
   channelGatewayInstance.getUnipileAccount(accountId);
 export const deleteUnipileAccount = (accountId: string) =>
   channelGatewayInstance.deleteUnipileAccount(accountId);
-export const getHostedAuthLink = (type: string) =>
-  channelGatewayInstance.getHostedAuthLink(type);
+export const getHostedAuthLink = (type: string, orgId?: number) =>
+  channelGatewayInstance.getHostedAuthLink(type, orgId);
 export const listAllChats = (accountType?: string) =>
   channelGatewayInstance.listAllChats(accountType);
 export const sendEmail = (params: Parameters<ExternalChannelGateway["sendEmail"]>[0]) =>

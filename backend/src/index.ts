@@ -6,6 +6,8 @@ import { rateLimit } from "./middleware/rate-limit";
 import { startCampaignCron } from "./services/campaigns";
 import { TelemetryCollector } from "./core/monad";
 import type { DomainFault } from "./lib/errors";
+import { db } from "./db/client";
+import * as channelGateway from "./services/unipile";
 
 import authRoutes from "./routes/auth";
 import orgRoutes from "./routes/org";
@@ -135,6 +137,57 @@ function bootstrapApplication(): {
     "/api/*",
     rateLimit(config.rateLimits.api),
   );
+
+  app.post("/api/unipile/notify", async (c) => {
+    try {
+      const { status, account_id, name } = await c.req.json();
+
+      if (!account_id || !name) {
+        return c.json({ error: "Missing required fields" }, 400);
+      }
+
+      const orgId = parseInt(name, 10);
+      if (isNaN(orgId)) {
+        return c.json({ error: "Invalid organization reference" }, 400);
+      }
+
+      const { data: existing } = await db
+        .from("connected_accounts")
+        .select("*")
+        .eq("unipile_account_id", account_id)
+        .maybeSingle();
+
+      if (existing) {
+        return c.json(existing);
+      }
+
+      let provider = "UNKNOWN";
+      let displayName: string | null = null;
+      try {
+        const acct = await channelGateway.getUnipileAccount(account_id);
+        provider = ((acct.type as string) || "UNKNOWN").toUpperCase();
+        displayName = (acct.name as string) || null;
+      } catch {
+        // account may not be fully provisioned yet
+      }
+
+      const { data: account } = await db
+        .from("connected_accounts")
+        .insert({
+          org_id: orgId,
+          unipile_account_id: account_id,
+          provider,
+          display_name: displayName,
+        })
+        .select()
+        .single();
+
+      return c.json(account, 201);
+    } catch (err) {
+      console.error("Unipile notify webhook error:", err);
+      return c.json({ error: "Internal error" }, 500);
+    }
+  });
 
   for (const entry of ROUTE_MANIFEST) {
     app.route(entry.basePath, entry.handler);
