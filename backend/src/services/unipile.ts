@@ -1,8 +1,7 @@
-import { readFileSync } from "fs";
-import { basename } from "path";
 import type { LifecycleAware, ChannelProtocol } from "../core/types";
 import { AsyncResult } from "../core/monad";
 import { TelemetryCollector } from "../core/monad";
+import { downloadUpload } from "../lib/upload";
 
 interface ChannelGatewayConfiguration {
   readonly baseUrl: string;
@@ -121,15 +120,15 @@ class ExternalChannelGateway implements LifecycleAware {
     return res.json() as Promise<T>;
   }
 
-  private attachFilesToForm(
+  private async attachFilesToForm(
     form: FormData,
     attachmentPaths: string[],
     fieldName = "attachments",
-  ): void {
-    for (const filePath of attachmentPaths) {
-      const buffer = readFileSync(filePath);
+  ): Promise<void> {
+    for (const storagePath of attachmentPaths) {
+      const { buffer, filename } = await downloadUpload(storagePath);
       const blob = new Blob([buffer]);
-      form.append(fieldName, blob, basename(filePath));
+      form.append(fieldName, blob, filename);
     }
   }
 
@@ -253,7 +252,7 @@ class ExternalChannelGateway implements LifecycleAware {
     form.append("body", params.body);
 
     if (params.attachmentPaths?.length) {
-      this.attachFilesToForm(form, params.attachmentPaths);
+      await this.attachFilesToForm(form, params.attachmentPaths);
     }
 
     return this.executeFormTransport("POST", "/emails", form);
@@ -320,7 +319,7 @@ class ExternalChannelGateway implements LifecycleAware {
     form.append("reply_to", params.emailId);
 
     if (params.attachmentPaths?.length) {
-      this.attachFilesToForm(form, params.attachmentPaths);
+      await this.attachFilesToForm(form, params.attachmentPaths);
     }
 
     return this.executeFormTransport("POST", "/emails", form);
@@ -353,7 +352,7 @@ class ExternalChannelGateway implements LifecycleAware {
     form.append("text", text);
 
     if (attachmentPaths?.length) {
-      this.attachFilesToForm(form, attachmentPaths);
+      await this.attachFilesToForm(form, attachmentPaths);
     }
 
     return this.executeFormTransport(
@@ -375,7 +374,7 @@ class ExternalChannelGateway implements LifecycleAware {
     form.append("text", text);
 
     if (attachmentPaths?.length) {
-      this.attachFilesToForm(form, attachmentPaths);
+      await this.attachFilesToForm(form, attachmentPaths);
     }
 
     return this.executeFormTransport("POST", "/chats", form);

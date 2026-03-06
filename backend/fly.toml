@@ -5,7 +5,6 @@ primary_region = 'fra'
 
 [env]
   NODE_ENV = 'production'
-  UPLOADS_DIR = '/data/uploads'
   CORS_ORIGIN = 'https://hn-social.netlify.app'
   FRONTEND_URL = 'https://hn-social.netlify.app'
   BACKEND_URL = 'https://hn-social.fly.dev'
@@ -17,10 +16,6 @@ primary_region = 'fra'
   auto_start_machines = true
   min_machines_running = 0
   processes = ['app']
-
-[mounts]
-  source = 'hack_nation_data'
-  destination = '/data'
 
 [[vm]]
   memory = '1gb'

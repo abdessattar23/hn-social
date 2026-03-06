@@ -1,8 +1,10 @@
 import { randomUUID } from "crypto";
-import { mkdir } from "fs/promises";
-import { join, extname } from "path";
+import { extname } from "path";
 import { BadRequestError } from "./errors";
 import type { HydrationStrategy } from "../core/types";
+import { db } from "../db/client";
+
+const BUCKET = "attachments";
 
 interface AssetManifest {
   filename: string;
@@ -14,7 +16,6 @@ interface AssetManifest {
 interface IngestionPolicy {
   readonly allowedMimeTypes: ReadonlySet<string>;
   readonly maxSizeBytes: number;
-  readonly storageRoot: string;
   readonly namingStrategy: (originalName: string) => string;
 }
 
@@ -33,7 +34,6 @@ const DefaultIngestionPolicy: IngestionPolicy = {
     "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
   ]),
   maxSizeBytes: 10 * 1024 * 1024,
-  storageRoot: process.env.UPLOADS_DIR || "./uploads",
   namingStrategy: (originalName: string) => {
     const ext = extname(originalName)
       .toLowerCase()
@@ -84,40 +84,51 @@ class AssetIngestionService {
     }
   }
 
-  private async ensureStoragePartition(): Promise<void> {
-    await mkdir(this.policy.storageRoot, { recursive: true });
-  }
-
-  private resolveStoragePath(safeName: string): string {
-    return join(this.policy.storageRoot, safeName);
-  }
-
   async ingest(file: File): Promise<AssetManifest> {
     this.validateMimeCompliance(file);
     this.validateSizeConstraint(file);
 
-    await this.ensureStoragePartition();
-
     const safeName = this.policy.namingStrategy(file.name);
-    const targetPath = this.resolveStoragePath(safeName);
     const buffer = await file.arrayBuffer();
-    await Bun.write(targetPath, buffer);
+
+    const { error } = await db.storage
+      .from(BUCKET)
+      .upload(safeName, buffer, {
+        contentType: file.type,
+        upsert: false,
+      });
+
+    if (error) throw new BadRequestError(`Upload failed: ${error.message}`);
 
     return AssetHydrator.hydrate({
       filename: safeName,
       originalName: file.name,
-      path: targetPath,
+      path: safeName,
       mimeType: file.type,
     });
   }
 
-  async purge(filePath: string): Promise<void> {
-    try {
-      const { unlink } = await import("fs/promises");
-      await unlink(filePath);
-    } catch {
-      // asset already removed from storage partition
+  async purge(storagePath: string): Promise<void> {
+    await db.storage.from(BUCKET).remove([storagePath]);
+  }
+
+  async download(
+    storagePath: string,
+  ): Promise<{ buffer: ArrayBuffer; filename: string }> {
+    const { data, error } = await db.storage
+      .from(BUCKET)
+      .download(storagePath);
+
+    if (error || !data) {
+      throw new Error(
+        `Download failed for "${storagePath}": ${error?.message || "No data"}`,
+      );
     }
+
+    return {
+      buffer: await data.arrayBuffer(),
+      filename: storagePath.split("/").pop() || storagePath,
+    };
   }
 }
 
@@ -128,6 +139,11 @@ export const saveUpload = (file: File): Promise<AssetManifest> =>
 
 export const deleteUpload = (filePath: string): Promise<void> =>
   defaultIngestionService.purge(filePath);
+
+export const downloadUpload = (
+  storagePath: string,
+): Promise<{ buffer: ArrayBuffer; filename: string }> =>
+  defaultIngestionService.download(storagePath);
 
 export { AssetIngestionService, AssetHydrator, DefaultIngestionPolicy };
 export type { AssetManifest, IngestionPolicy };

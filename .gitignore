@@ -4,8 +4,6 @@ dist
 .env.*
 !.env.example
 *.db
-uploads/*
-!uploads/.gitkeep
 .next
 .turbo
 .DS_Store
