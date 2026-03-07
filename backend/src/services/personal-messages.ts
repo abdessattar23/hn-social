@@ -228,11 +228,26 @@ Best regards,
 The Hack-Nation Team`,
 });
 
+export async function listHackathonEvents() {
+    // Get distinct event numbers from hackathon_applications
+    const { data, error } = await db
+        .from("hackathon_applications")
+        .select("event")
+        .not("event", "is", null)
+        .order("event", { ascending: false });
+    if (error) throw new BadRequestError(error.message);
+
+    const uniqueEvents = [...new Set((data || []).map((d: any) => d.event).filter(Boolean))];
+    return uniqueEvents.map((e: number) => ({ id: e, label: `Hack-Nation ${e}` }));
+}
+
 export async function syncFromApplications(
-    preStatus: "pre_accepted" | "pre_rejected",
+    statusValue: string,
+    statusField: "pre_status" | "status",
     accountId: string,
     orgId: number,
     userId: string,
+    eventId?: number,
 ) {
     // Verify account
     const { data: account } = await db
@@ -244,18 +259,26 @@ export async function syncFromApplications(
     if (!account) throw new BadRequestError("Account not connected to your organization");
 
     // Fetch applications
-    const { data: applications, error: fetchErr } = await db
+    let query = db
         .from("hackathon_applications")
-        .select("id, first_name, last_name, email")
-        .eq("pre_status", preStatus);
+        .select("id, first_name, last_name, email, event")
+        .eq(statusField, statusValue);
+
+    if (eventId) {
+        query = query.eq("event", eventId);
+    }
+
+    const { data: applications, error: fetchErr } = await query;
 
     if (fetchErr) throw new BadRequestError(fetchErr.message);
     if (!applications || applications.length === 0) {
-        throw new BadRequestError(`No applications found with pre_status = '${preStatus}'`);
+        throw new BadRequestError(`No applications found with ${statusField} = '${statusValue}'${eventId ? ` and event = ${eventId}` : ''}`);
     }
 
-    const label = preStatus === "pre_accepted" ? "Accepted" : "Rejected";
-    const batchName = `HN5 ${label} — ${new Date().toLocaleDateString("en-GB")}`;
+    const isAccepted = statusValue === "pre_accepted" || statusValue === "accepted";
+    const label = isAccepted ? "Accepted" : "Rejected";
+    const eventLabel = eventId ? `HN${eventId}` : "HN";
+    const batchName = `${eventLabel} ${label} — ${new Date().toLocaleDateString("en-GB")}`;
 
     // Create batch
     const { data: batch, error: batchErr } = await db
@@ -272,7 +295,7 @@ export async function syncFromApplications(
     if (batchErr) throw new BadRequestError(batchErr.message);
 
     // Generate items
-    const templateFn = preStatus === "pre_accepted" ? ACCEPTANCE_TEMPLATE : REJECTION_TEMPLATE;
+    const templateFn = isAccepted ? ACCEPTANCE_TEMPLATE : REJECTION_TEMPLATE;
     const items = applications.map((app: any) => {
         const firstName = app.first_name || "Applicant";
         const tmpl = templateFn(firstName);
@@ -298,7 +321,8 @@ export async function syncFromApplications(
         .eq("id", batch.id);
 
     telemetry.record("personal-batch.synced", batch.id, {
-        preStatus,
+        statusField,
+        statusValue,
         count: items.length,
     });
 

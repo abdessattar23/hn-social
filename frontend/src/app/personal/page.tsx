@@ -62,15 +62,20 @@ export default function PersonalPage() {
 
     // Sync applications state
     const [showSync, setShowSync] = useState(false);
-    const [syncStatus, setSyncStatus] = useState<'pre_accepted' | 'pre_rejected'>('pre_accepted');
+    const [syncStatus, setSyncStatus] = useState('pre_accepted:pre_status');
     const [syncAccountId, setSyncAccountId] = useState('');
+    const [syncEventId, setSyncEventId] = useState('');
     const [syncing, setSyncing] = useState(false);
+    const [hackathonEvents, setHackathonEvents] = useState<{ id: number; label: string }[]>([]);
     const router = useRouter();
 
     useEffect(() => {
         if (!authed) return;
         load();
         loadAccounts();
+        api.get('/personal-messages/hackathon-events')
+            .then((d: any) => setHackathonEvents(d || []))
+            .catch(() => { });
     }, [authed]);
 
     const load = () =>
@@ -142,9 +147,12 @@ export default function PersonalPage() {
         setSyncing(true);
         setError('');
         try {
+            const [statusValue, statusField] = syncStatus.split(':');
             const batch: any = await api.post('/personal-messages/sync-applications', {
-                preStatus: syncStatus,
+                statusValue,
+                statusField,
                 accountId: syncAccountId,
+                eventId: syncEventId || undefined,
             });
             setShowSync(false);
             load();
@@ -234,7 +242,7 @@ export default function PersonalPage() {
                         whileHover={{ scale: 1.03 }}
                         whileTap={{ scale: 0.97 }}
                         onClick={() => setShowSync(!showSync)}
-                        className="bg-[#1a1a2e] hover:bg-[#16213e] text-white rounded-xl px-6 py-3 text-sm font-medium transition-colors whitespace-nowrap flex items-center gap-2"
+                        className="border border-primary/30 bg-primary/5 hover:bg-primary/10 text-primary rounded-xl px-6 py-3 text-sm font-medium transition-colors whitespace-nowrap flex items-center gap-2"
                     >
                         <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                             <path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
@@ -246,26 +254,45 @@ export default function PersonalPage() {
 
             {/* Sync Applications Panel */}
             <SlideDown open={showSync}>
-                <div className="rounded-2xl bg-[#1a1a2e] p-6 shadow-1 mb-6 border border-[#16213e]">
-                    <h3 className="text-white font-semibold text-sm mb-4 flex items-center gap-2">
-                        <svg className="w-5 h-5 text-primary" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                            <path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-                        </svg>
+                <div className="rounded-2xl bg-surface p-6 shadow-1 mb-6 border border-primary/20">
+                    <h3 className="text-dark font-semibold text-sm mb-4 flex items-center gap-2">
+                        <div className="w-8 h-8 rounded-lg bg-primary/10 flex items-center justify-center">
+                            <svg className="w-4 h-4 text-primary" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                                <path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                            </svg>
+                        </div>
                         Sync from Hackathon Applications
                     </h3>
-                    <div className="grid grid-cols-2 gap-4 mb-4">
+                    <div className="grid grid-cols-3 gap-4 mb-4">
+                        <select
+                            value={syncEventId}
+                            onChange={(e) => setSyncEventId(e.target.value)}
+                            className="border border-stroke rounded-xl px-5 py-3 text-sm outline-none bg-surface-2 transition-all focus:border-primary"
+                        >
+                            <option value="">All Events</option>
+                            {hackathonEvents.map((ev) => (
+                                <option key={ev.id} value={ev.id}>{ev.label}</option>
+                            ))}
+                        </select>
                         <select
                             value={syncStatus}
-                            onChange={(e) => setSyncStatus(e.target.value as any)}
-                            className="bg-[#16213e] border border-[#0f3460] text-white rounded-xl px-5 py-3 text-sm outline-none transition-all focus:border-primary"
+                            onChange={(e) => setSyncStatus(e.target.value)}
+                            className="border border-stroke rounded-xl px-5 py-3 text-sm outline-none bg-surface-2 transition-all focus:border-primary"
                         >
-                            <option value="pre_accepted">✅ Pre-Accepted</option>
-                            <option value="pre_rejected">❌ Pre-Rejected</option>
+                            <optgroup label="Pre-Status">
+                                <option value="pre_accepted:pre_status">✅ Pre-Accepted</option>
+                                <option value="pre_rejected:pre_status">❌ Pre-Rejected</option>
+                            </optgroup>
+                            <optgroup label="Final Status">
+                                <option value="accepted:status">✅ Accepted</option>
+                                <option value="rejected:status">❌ Rejected</option>
+                                <option value="pending:status">⏳ Pending</option>
+                            </optgroup>
                         </select>
                         <select
                             value={syncAccountId}
                             onChange={(e) => setSyncAccountId(e.target.value)}
-                            className="bg-[#16213e] border border-[#0f3460] text-white rounded-xl px-5 py-3 text-sm outline-none transition-all focus:border-primary"
+                            className="border border-stroke rounded-xl px-5 py-3 text-sm outline-none bg-surface-2 transition-all focus:border-primary"
                         >
                             <option value="">Select email account</option>
                             {accountsForChannel(accounts, 'EMAIL').map((a) => (
@@ -275,8 +302,8 @@ export default function PersonalPage() {
                             ))}
                         </select>
                     </div>
-                    <p className="text-gray-400 text-xs mb-4">
-                        This will query all applications with the selected status and create a batch with personalized email templates.
+                    <p className="text-dark-5 text-xs mb-4">
+                        Queries all applications with the selected status and creates a batch with personalized email templates.
                     </p>
                     <motion.button
                         whileHover={{ scale: 1.02 }}

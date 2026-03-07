@@ -19,6 +19,12 @@ personalMessagesRouter.get("/", async (c) => {
     return c.json(batches);
 });
 
+// List hackathon events for sync selector (MUST be before /:id)
+personalMessagesRouter.get("/hackathon-events", async (c) => {
+    const events = await service.listHackathonEvents();
+    return c.json(events);
+});
+
 // Get single batch with items
 personalMessagesRouter.get("/:id", async (c) => {
     const user = resolveUserContext(c);
@@ -43,13 +49,15 @@ personalMessagesRouter.post(
 personalMessagesRouter.post("/sync-applications", async (c) => {
     const user = resolveUserContext(c);
     const body = await c.req.json();
-    const preStatus = body.preStatus;
+    const statusValue = body.statusValue || body.preStatus;
+    const statusField: "pre_status" | "status" = body.statusField || "pre_status";
     const accountId = body.accountId;
-    if (!preStatus || !["pre_accepted", "pre_rejected"].includes(preStatus)) {
-        throw new BadRequestError("preStatus must be 'pre_accepted' or 'pre_rejected'");
+    const eventId = body.eventId ? Number(body.eventId) : undefined;
+    if (!statusValue) {
+        throw new BadRequestError("statusValue is required");
     }
     if (!accountId) throw new BadRequestError("accountId is required");
-    const batch = await service.syncFromApplications(preStatus, accountId, user.orgId, user.id);
+    const batch = await service.syncFromApplications(statusValue, statusField, accountId, user.orgId, user.id, eventId);
     return c.json(batch, 201);
 });
 
