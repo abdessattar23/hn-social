@@ -18,6 +18,7 @@ import unipileRoutes from "./routes/unipile";
 import linkedinRoutes from "./routes/linkedin";
 import batchesRoutes from "./routes/batches";
 import emailRoutes from "./routes/email";
+import personalMessagesRoutes from "./routes/personal-messages";
 
 interface RouteManifestEntry {
   readonly basePath: string;
@@ -104,6 +105,12 @@ const ROUTE_MANIFEST: ReadonlyArray<RouteManifestEntry> = [
     basePath: "/api/email",
     handler: emailRoutes,
     description: "Email dispatch adapter and inbox materialization",
+    authRequired: true,
+  },
+  {
+    basePath: "/api/personal-messages",
+    handler: personalMessagesRoutes,
+    description: "Personal message batch orchestration via CSV",
     authRequired: true,
   },
 ] as const;

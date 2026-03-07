@@ -232,6 +232,17 @@ const OutreachBatchSchemas = {
   ),
 } as const;
 
+const PersonalMessageSchemas = {
+  create: registerSchema(
+    z.object({
+      name: boundedString(1, 200),
+      channel: channelDiscriminator,
+      accountId: accountIdConstraint,
+    }),
+    "personal",
+  ),
+} as const;
+
 const CommonSchemas = {
   idParam: registerSchema(
     z.object({ id: z.coerce.number().int().positive() }),
@@ -260,6 +271,7 @@ export const linkedinMessageSchema = ProfessionalNetworkSchemas.message.schema;
 export const linkedinSearchParamsSchema = ProfessionalNetworkSchemas.searchParams.schema;
 export const createBatchSchema = OutreachBatchSchemas.create.schema;
 export const sendBatchMessagesSchema = OutreachBatchSchemas.sendMessages.schema;
+export const createPersonalMessageSchema = PersonalMessageSchemas.create.schema;
 export const idParam = CommonSchemas.idParam.schema;
 
 export const ValidationDomains = {
@@ -271,5 +283,6 @@ export const ValidationDomains = {
   integration: IntegrationBridgeSchemas,
   network: ProfessionalNetworkSchemas,
   outreach: OutreachBatchSchemas,
+  personal: PersonalMessageSchemas,
   common: CommonSchemas,
 } as const;

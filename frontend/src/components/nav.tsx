@@ -10,6 +10,7 @@ const links = [
   { href: '/lists', label: 'Contacts' },
   { href: '/messages', label: 'Templates' },
   { href: '/campaigns', label: 'Campaigns' },
+  { href: '/personal', label: 'Personal' },
   { href: '/email', label: 'Email' },
   { href: '/linkedin', label: 'LinkedIn' },
   { href: '/settings', label: 'Settings' },
@@ -50,9 +51,8 @@ export default function Nav() {
               <Link
                 key={l.href}
                 href={l.href}
-                className={`relative px-3.5 py-2 text-[13px] font-medium transition-colors ${
-                  active ? 'text-primary' : 'text-dark-5 hover:text-dark'
-                }`}
+                className={`relative px-3.5 py-2 text-[13px] font-medium transition-colors ${active ? 'text-primary' : 'text-dark-5 hover:text-dark'
+                  }`}
               >
                 <span className="relative z-10">{l.label}</span>
                 {active && (
@@ -111,9 +111,8 @@ export default function Nav() {
                       key={l.href}
                       href={l.href}
                       onClick={() => setMobileOpen(false)}
-                      className={`block px-3 py-2.5 rounded-xl text-sm font-medium transition-colors ${
-                        active ? 'text-primary bg-primary-dim' : 'text-dark-5 hover:text-dark hover:bg-surface-2'
-                      }`}
+                      className={`block px-3 py-2.5 rounded-xl text-sm font-medium transition-colors ${active ? 'text-primary bg-primary-dim' : 'text-dark-5 hover:text-dark hover:bg-surface-2'
+                        }`}
                     >
                       {l.label}
                     </Link>
