@@ -123,6 +123,20 @@ export default function CampaignsPage() {
     });
   };
 
+  const exportFailed = async (id: number, name: string) => {
+    try {
+      const blob = await api.downloadBlob(`/campaigns/${id}/export-failed`);
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${name.replace(/[^a-zA-Z0-9_-]/g, '_')}-failed.csv`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (err: any) {
+      setLoadError(err.message || 'Failed to export');
+    }
+  };
+
   const bulkDelete = async () => {
     if (selected.size === 0) return;
     setDeleting(true);
@@ -232,7 +246,15 @@ export default function CampaignsPage() {
                         />
                       </div>
                       {c.failed > 0 && (
-                        <span className="text-red text-[11px] mt-1 block">{c.failed} failed</span>
+                        <div className="flex items-center gap-2 mt-1">
+                          <span className="text-red text-[11px]">{c.failed} failed</span>
+                          <button
+                            onClick={(e) => { e.stopPropagation(); exportFailed(c.id, c.name); }}
+                            className="text-[11px] text-primary hover:text-accent font-medium transition-colors underline underline-offset-2"
+                          >
+                            Export failed
+                          </button>
+                        </div>
                       )}
                     </div>
                   )}

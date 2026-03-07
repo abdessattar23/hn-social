@@ -64,6 +64,28 @@ campaignsRouter.patch(
   },
 );
 
+campaignsRouter.get("/:id/export-failed", async (c) => {
+  const user = resolveUserContext(c);
+  const id = extractNumericParam(c);
+  const logs = await orchestrator.getFailedLogs(id, user.orgId);
+
+  const header = "Name,Identifier,Error";
+  const rows = logs.map((l: any) => {
+    const name = (l.contact_name || "").replace(/"/g, '""');
+    const identifier = (l.contact_identifier || "").replace(/"/g, '""');
+    const error = (l.error || "").replace(/"/g, '""');
+    return `"${name}","${identifier}","${error}"`;
+  });
+  const csv = [header, ...rows].join("\n");
+
+  c.header("Content-Type", "text/csv; charset=utf-8");
+  c.header(
+    "Content-Disposition",
+    `attachment; filename="campaign-${id}-failed.csv"`,
+  );
+  return c.body(csv);
+});
+
 campaignsRouter.post("/:id/stop", async (c) => {
   const user = resolveUserContext(c);
   const id = extractNumericParam(c);

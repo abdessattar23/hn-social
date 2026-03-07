@@ -489,6 +489,18 @@ async function executePropagationPipeline(
   });
 }
 
+export async function getFailedLogs(id: number, orgId: number) {
+  await findOne(id, orgId);
+  const { data, error } = await db
+    .from("campaign_logs")
+    .select("contact_name, contact_identifier, error")
+    .eq("campaign_id", id)
+    .eq("status", "FAILED")
+    .order("id", { ascending: true });
+  if (error) throw new BadRequestError(error.message);
+  return data || [];
+}
+
 export async function cancel(id: number, orgId: number) {
   const campaign = await findOne(id, orgId);
   if (campaign.status !== "SCHEDULED") {
