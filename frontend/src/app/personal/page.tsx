@@ -3,6 +3,7 @@ import { useEffect, useState, useMemo } from 'react';
 import { api } from '@/lib/api';
 import { useRequireAuth } from '@/lib/useRequireAuth';
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import { AnimatedPage, AnimatedCard, StaggerContainer, StaggerItem, SlideDown, SpringIn } from '@/components/motion';
 import { motion, AnimatePresence } from 'framer-motion';
 
@@ -58,6 +59,13 @@ export default function PersonalPage() {
     const [loadError, setLoadError] = useState('');
     const [selected, setSelected] = useState<Set<number>>(new Set());
     const [deleting, setDeleting] = useState(false);
+
+    // Sync applications state
+    const [showSync, setShowSync] = useState(false);
+    const [syncStatus, setSyncStatus] = useState<'pre_accepted' | 'pre_rejected'>('pre_accepted');
+    const [syncAccountId, setSyncAccountId] = useState('');
+    const [syncing, setSyncing] = useState(false);
+    const router = useRouter();
 
     useEffect(() => {
         if (!authed) return;
@@ -126,6 +134,28 @@ export default function PersonalPage() {
         setDeleting(false);
     };
 
+    const syncApplications = async () => {
+        if (!syncAccountId) {
+            setError('Please select an email account for sending.');
+            return;
+        }
+        setSyncing(true);
+        setError('');
+        try {
+            const batch: any = await api.post('/personal-messages/sync-applications', {
+                preStatus: syncStatus,
+                accountId: syncAccountId,
+            });
+            setShowSync(false);
+            load();
+            router.push(`/personal/${batch.id}`);
+        } catch (err: any) {
+            setError(err.message || 'Failed to sync applications');
+        } finally {
+            setSyncing(false);
+        }
+    };
+
     if (!authed) return null;
 
     return (
@@ -190,16 +220,79 @@ export default function PersonalPage() {
                 </div>
             </SlideDown>
 
-            <div className="flex items-center justify-between mb-4">
-                <motion.button
-                    whileHover={{ scale: 1.03 }}
-                    whileTap={{ scale: 0.97 }}
-                    onClick={() => setShowForm(!showForm)}
-                    className="bg-primary hover:bg-accent text-white rounded-xl px-6 py-3 text-sm font-medium transition-colors whitespace-nowrap"
-                >
-                    {showForm ? 'Cancel' : 'New Batch'}
-                </motion.button>
+            <div className="flex items-center gap-3 justify-between mb-4 flex-wrap">
+                <div className="flex items-center gap-3">
+                    <motion.button
+                        whileHover={{ scale: 1.03 }}
+                        whileTap={{ scale: 0.97 }}
+                        onClick={() => setShowForm(!showForm)}
+                        className="bg-primary hover:bg-accent text-white rounded-xl px-6 py-3 text-sm font-medium transition-colors whitespace-nowrap"
+                    >
+                        {showForm ? 'Cancel' : 'New Batch'}
+                    </motion.button>
+                    <motion.button
+                        whileHover={{ scale: 1.03 }}
+                        whileTap={{ scale: 0.97 }}
+                        onClick={() => setShowSync(!showSync)}
+                        className="bg-[#1a1a2e] hover:bg-[#16213e] text-white rounded-xl px-6 py-3 text-sm font-medium transition-colors whitespace-nowrap flex items-center gap-2"
+                    >
+                        <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                        </svg>
+                        {showSync ? 'Cancel' : 'Sync Applications'}
+                    </motion.button>
+                </div>
             </div>
+
+            {/* Sync Applications Panel */}
+            <SlideDown open={showSync}>
+                <div className="rounded-2xl bg-[#1a1a2e] p-6 shadow-1 mb-6 border border-[#16213e]">
+                    <h3 className="text-white font-semibold text-sm mb-4 flex items-center gap-2">
+                        <svg className="w-5 h-5 text-primary" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                        </svg>
+                        Sync from Hackathon Applications
+                    </h3>
+                    <div className="grid grid-cols-2 gap-4 mb-4">
+                        <select
+                            value={syncStatus}
+                            onChange={(e) => setSyncStatus(e.target.value as any)}
+                            className="bg-[#16213e] border border-[#0f3460] text-white rounded-xl px-5 py-3 text-sm outline-none transition-all focus:border-primary"
+                        >
+                            <option value="pre_accepted">✅ Pre-Accepted</option>
+                            <option value="pre_rejected">❌ Pre-Rejected</option>
+                        </select>
+                        <select
+                            value={syncAccountId}
+                            onChange={(e) => setSyncAccountId(e.target.value)}
+                            className="bg-[#16213e] border border-[#0f3460] text-white rounded-xl px-5 py-3 text-sm outline-none transition-all focus:border-primary"
+                        >
+                            <option value="">Select email account</option>
+                            {accountsForChannel(accounts, 'EMAIL').map((a) => (
+                                <option key={a.id} value={a.id}>
+                                    {a.name || a.type} ({a.id.slice(0, 8)}...)
+                                </option>
+                            ))}
+                        </select>
+                    </div>
+                    <p className="text-gray-400 text-xs mb-4">
+                        This will query all applications with the selected status and create a batch with personalized email templates.
+                    </p>
+                    <motion.button
+                        whileHover={{ scale: 1.02 }}
+                        whileTap={{ scale: 0.98 }}
+                        onClick={syncApplications}
+                        disabled={syncing}
+                        className="bg-primary hover:bg-accent disabled:opacity-50 text-white rounded-xl px-6 py-3 text-sm font-medium transition-colors flex items-center gap-2"
+                    >
+                        {syncing ? (
+                            <><span className="animate-spin">⟳</span> Syncing...</>
+                        ) : (
+                            <>Generate Email Batch</>
+                        )}
+                    </motion.button>
+                </div>
+            </SlideDown>
 
             {batches.length === 0 ? (
                 <motion.div

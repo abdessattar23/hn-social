@@ -8,3 +8,6 @@ dist
 .turbo
 .DS_Store
 bun.lock
+
+# Local Netlify folder
+.netlify

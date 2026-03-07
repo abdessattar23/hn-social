@@ -1,4 +1,4 @@
-app = '/hn-social'
+app = 'hn-social'
 primary_region = 'fra'
 
 [build]

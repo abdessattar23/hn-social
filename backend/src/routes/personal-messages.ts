@@ -39,6 +39,20 @@ personalMessagesRouter.post(
     },
 );
 
+// Sync applications from hackathon_applications table
+personalMessagesRouter.post("/sync-applications", async (c) => {
+    const user = resolveUserContext(c);
+    const body = await c.req.json();
+    const preStatus = body.preStatus;
+    const accountId = body.accountId;
+    if (!preStatus || !["pre_accepted", "pre_rejected"].includes(preStatus)) {
+        throw new BadRequestError("preStatus must be 'pre_accepted' or 'pre_rejected'");
+    }
+    if (!accountId) throw new BadRequestError("accountId is required");
+    const batch = await service.syncFromApplications(preStatus, accountId, user.orgId, user.id);
+    return c.json(batch, 201);
+});
+
 // Import CSV into a batch
 personalMessagesRouter.post("/:id/import-csv", async (c) => {
     const user = resolveUserContext(c);

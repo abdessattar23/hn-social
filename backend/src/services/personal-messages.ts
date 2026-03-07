@@ -189,6 +189,121 @@ export async function remove(id: number, orgId: number) {
     if (error) throw new BadRequestError(error.message);
     return { deleted: true };
 }
+// ── Application Email Sync ─────────────────────────────────────────────
+
+const ACCEPTANCE_TEMPLATE = (firstName: string) => ({
+    subject: "🎉 Congratulations — You're In! | Hack-Nation 5",
+    body: `Hi ${firstName},
+
+We're thrilled to inform you that your application to Hack-Nation 5 has been accepted! 🎉
+
+You've been selected from a competitive pool of applicants, and we can't wait to see what you'll build.
+
+Here's what happens next:
+• You'll receive a signup code shortly to create your account on our platform
+• Join our community channels to connect with other participants
+• Start forming your team if you haven't already
+
+If you have any questions, don't hesitate to reach out.
+
+See you at Hack-Nation 5! 🚀
+
+Best regards,
+The Hack-Nation Team`,
+});
+
+const REJECTION_TEMPLATE = (firstName: string) => ({
+    subject: "Your Hack-Nation 5 Application Update",
+    body: `Hi ${firstName},
+
+Thank you for your interest in Hack-Nation 5 and for taking the time to apply.
+
+After careful review, we regret to inform you that we are unable to offer you a spot in this edition. This was an incredibly competitive cycle with a record number of applications.
+
+We encourage you to apply again for future events — we'd love to see you participate.
+
+Thank you for your understanding, and we wish you the best in your endeavors.
+
+Best regards,
+The Hack-Nation Team`,
+});
+
+export async function syncFromApplications(
+    preStatus: "pre_accepted" | "pre_rejected",
+    accountId: string,
+    orgId: number,
+    userId: string,
+) {
+    // Verify account
+    const { data: account } = await db
+        .from("connected_accounts")
+        .select("id")
+        .eq("unipile_account_id", accountId)
+        .eq("org_id", orgId)
+        .maybeSingle();
+    if (!account) throw new BadRequestError("Account not connected to your organization");
+
+    // Fetch applications
+    const { data: applications, error: fetchErr } = await db
+        .from("hackathon_applications")
+        .select("id, first_name, last_name, email")
+        .eq("pre_status", preStatus);
+
+    if (fetchErr) throw new BadRequestError(fetchErr.message);
+    if (!applications || applications.length === 0) {
+        throw new BadRequestError(`No applications found with pre_status = '${preStatus}'`);
+    }
+
+    const label = preStatus === "pre_accepted" ? "Accepted" : "Rejected";
+    const batchName = `HN5 ${label} — ${new Date().toLocaleDateString("en-GB")}`;
+
+    // Create batch
+    const { data: batch, error: batchErr } = await db
+        .from("personal_messages")
+        .insert({
+            name: batchName,
+            channel: "EMAIL",
+            account_id: accountId,
+            org_id: orgId,
+            user_id: userId,
+        })
+        .select()
+        .single();
+    if (batchErr) throw new BadRequestError(batchErr.message);
+
+    // Generate items
+    const templateFn = preStatus === "pre_accepted" ? ACCEPTANCE_TEMPLATE : REJECTION_TEMPLATE;
+    const items = applications.map((app: any) => {
+        const firstName = app.first_name || "Applicant";
+        const tmpl = templateFn(firstName);
+        return {
+            personal_message_id: batch.id,
+            recipient_name: `${app.first_name || ""} ${app.last_name || ""}`.trim() || app.email,
+            recipient_identifier: app.email,
+            message_body: tmpl.body,
+            subject: tmpl.subject,
+            status: "PENDING",
+        };
+    });
+
+    const { error: insertErr } = await db
+        .from("personal_message_items")
+        .insert(items);
+    if (insertErr) throw new BadRequestError(insertErr.message);
+
+    // Update total
+    await db
+        .from("personal_messages")
+        .update({ total: items.length })
+        .eq("id", batch.id);
+
+    telemetry.record("personal-batch.synced", batch.id, {
+        preStatus,
+        count: items.length,
+    });
+
+    return { ...batch, total: items.length, itemCount: items.length };
+}
 
 // ── CSV Import ─────────────────────────────────────────────────────────
 
