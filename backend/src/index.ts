@@ -4,6 +4,7 @@ import { secureHeaders } from "hono/secure-headers";
 import { HTTPException } from "hono/http-exception";
 import { rateLimit } from "./middleware/rate-limit";
 import { startCampaignCron } from "./services/campaigns";
+import { startPersonalMessageCron } from "./services/personal-messages";
 import { TelemetryCollector } from "./core/monad";
 import type { DomainFault } from "./lib/errors";
 import { db } from "./db/client";
@@ -234,6 +235,7 @@ function bootstrapApplication(): {
 const { app, config } = bootstrapApplication();
 
 startCampaignCron();
+startPersonalMessageCron();
 
 console.log(`Hack-Nation API running on port ${config.port}`);
 

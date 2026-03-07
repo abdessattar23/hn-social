@@ -72,14 +72,20 @@ class ExternalChannelGateway implements LifecycleAware {
         : undefined,
     );
 
+    const bodyStr = descriptor.body
+      ? descriptor.contentType === "multipart"
+        ? undefined
+        : JSON.stringify(descriptor.body)
+      : undefined;
+
+    if (descriptor.path === "/emails" && descriptor.method === "POST") {
+      console.log("SENDING UNIPILE EMAIL PAYLOAD:", bodyStr);
+    }
+
     const res = await fetch(url, {
       method: descriptor.method,
       headers,
-      body: descriptor.body
-        ? descriptor.contentType === "multipart"
-          ? undefined
-          : JSON.stringify(descriptor.body)
-        : undefined,
+      body: bodyStr,
     });
 
     const latencyMs = Date.now() - startTime;
@@ -245,16 +251,26 @@ class ExternalChannelGateway implements LifecycleAware {
     body: string;
     attachmentPaths?: string[];
   }) {
+    if (!params.attachmentPaths?.length) {
+      return this.executeTransport({
+        method: "POST",
+        path: "/emails",
+        body: {
+          account_id: params.accountId,
+          to: params.to,
+          subject: params.subject,
+          body: params.body,
+        },
+      });
+    }
+
     const form = new FormData();
     form.append("account_id", params.accountId);
     form.append("to", JSON.stringify(params.to));
     form.append("subject", params.subject);
     form.append("body", params.body);
 
-    if (params.attachmentPaths?.length) {
-      await this.attachFilesToForm(form, params.attachmentPaths);
-    }
-
+    await this.attachFilesToForm(form, params.attachmentPaths);
     return this.executeFormTransport("POST", "/emails", form);
   }
 
@@ -313,15 +329,24 @@ class ExternalChannelGateway implements LifecycleAware {
     body: string;
     attachmentPaths?: string[];
   }) {
+    if (!params.attachmentPaths?.length) {
+      return this.executeTransport({
+        method: "POST",
+        path: "/emails",
+        body: {
+          account_id: params.accountId,
+          body: params.body,
+          reply_to: params.emailId,
+        },
+      });
+    }
+
     const form = new FormData();
     form.append("account_id", params.accountId);
     form.append("body", params.body);
     form.append("reply_to", params.emailId);
 
-    if (params.attachmentPaths?.length) {
-      await this.attachFilesToForm(form, params.attachmentPaths);
-    }
-
+    await this.attachFilesToForm(form, params.attachmentPaths);
     return this.executeFormTransport("POST", "/emails", form);
   }
 

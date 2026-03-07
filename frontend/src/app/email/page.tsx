@@ -128,7 +128,7 @@ export default function EmailPage() {
         setAccounts(emailAccounts);
         if (emailAccounts.length) setSelectedAccount(emailAccounts[0].id);
       })
-      .catch(() => {});
+      .catch(() => { });
   }, []);
 
   useEffect(() => {
@@ -254,6 +254,29 @@ export default function EmailPage() {
     }
   };
 
+  const handleDisconnect = async () => {
+    if (!selectedAccount) return;
+    const account = accounts.find((a) => a.id === selectedAccount);
+    const name = account?.name || account?.connection_params?.im?.display_name || account?.id;
+    if (!confirm(`Are you sure you want to disconnect "${name}"?`)) return;
+
+    try {
+      await api.del(`/unipile/accounts/${selectedAccount}`);
+      const data = await api.get('/unipile/accounts');
+      const emailAccounts = (Array.isArray(data) ? data : data.items || [])
+        .filter((a: any) => EMAIL_TYPES.includes(a.type));
+      setAccounts(emailAccounts);
+      if (emailAccounts.length > 0) {
+        setSelectedAccount(emailAccounts[0].id);
+      } else {
+        setSelectedAccount('');
+        setEmails([]);
+      }
+    } catch (err: any) {
+      alert(err.message || 'Failed to disconnect account');
+    }
+  };
+
   const displayFolders = folders.length > 0
     ? folders
     : DEFAULT_FOLDERS.map((f) => ({ id: f.id, name: f.name }));
@@ -308,15 +331,26 @@ export default function EmailPage() {
                 </option>
               ))}
             </select>
-            <button
-              onClick={() => loadEmails(selectedFolder, selectedAccount)}
-              className="text-xs text-dark-5 hover:text-dark transition-colors"
-              title="Refresh"
-            >
-              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0 3.181 3.183a8.25 8.25 0 0 0 13.803-3.7M4.031 9.865a8.25 8.25 0 0 1 13.803-3.7l3.181 3.182" />
-              </svg>
-            </button>
+            <div className="flex items-center gap-1">
+              <button
+                onClick={() => loadEmails(selectedFolder, selectedAccount)}
+                className="p-2 text-dark-5 hover:text-dark hover:bg-surface-2 rounded-lg transition-colors flex items-center justify-center"
+                title="Refresh Inbox"
+              >
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0 3.181 3.183a8.25 8.25 0 0 0 13.803-3.7M4.031 9.865a8.25 8.25 0 0 1 13.803-3.7l3.181 3.182" />
+                </svg>
+              </button>
+              <button
+                onClick={handleDisconnect}
+                className="p-2 text-dark-5 hover:text-red hover:bg-red/10 rounded-lg transition-colors flex items-center justify-center"
+                title="Disconnect Account"
+              >
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M18.364 18.364A9 9 0 005.636 5.636m12.728 12.728A9 9 0 015.636 5.636m12.728 12.728L5.636 5.636" />
+                </svg>
+              </button>
+            </div>
           </div>
         )}
       </motion.div>
@@ -354,11 +388,10 @@ export default function EmailPage() {
                     <button
                       key={folder.id}
                       onClick={() => setSelectedFolder(folder.id)}
-                      className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-sm font-medium transition-all duration-200 ${
-                        active
-                          ? 'bg-primary/10 text-primary'
-                          : 'text-dark-5 hover:text-dark hover:bg-surface-2'
-                      }`}
+                      className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-sm font-medium transition-all duration-200 ${active
+                        ? 'bg-primary/10 text-primary'
+                        : 'text-dark-5 hover:text-dark hover:bg-surface-2'
+                        }`}
                     >
                       <FolderIcon type={meta.icon} />
                       <span className="truncate">{folder.name}</span>
@@ -423,15 +456,13 @@ export default function EmailPage() {
                         animate={{ opacity: 1 }}
                         transition={{ delay: Math.min(i * 0.03, 0.3) }}
                         onClick={() => openEmail(email)}
-                        className={`w-full text-left px-4 py-3 flex gap-3 transition-all duration-150 ${
-                          isActive
-                            ? 'bg-primary/[0.06] border-l-2 border-l-primary'
-                            : 'hover:bg-surface-2 border-l-2 border-l-transparent'
-                        }`}
+                        className={`w-full text-left px-4 py-3 flex gap-3 transition-all duration-150 ${isActive
+                          ? 'bg-primary/[0.06] border-l-2 border-l-primary'
+                          : 'hover:bg-surface-2 border-l-2 border-l-transparent'
+                          }`}
                       >
-                        <div className={`w-9 h-9 rounded-full flex items-center justify-center text-xs font-bold shrink-0 ${
-                          isUnread ? 'bg-primary/10 text-primary' : 'bg-surface-3 text-dark-5'
-                        }`}>
+                        <div className={`w-9 h-9 rounded-full flex items-center justify-center text-xs font-bold shrink-0 ${isUnread ? 'bg-primary/10 text-primary' : 'bg-surface-3 text-dark-5'
+                          }`}>
                           {senderInitials(email)}
                         </div>
                         <div className="min-w-0 flex-1">

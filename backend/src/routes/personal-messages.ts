@@ -62,9 +62,17 @@ personalMessagesRouter.post("/:id/import-csv", async (c) => {
 
 // Send all items in a batch
 personalMessagesRouter.post("/:id/send", async (c) => {
+    let delayMinMs: number | undefined;
+    let delayMaxMs: number | undefined;
+    try {
+        const body = await c.req.json();
+        delayMinMs = body.delayMinMs;
+        delayMaxMs = body.delayMaxMs;
+    } catch { }
+
     const user = resolveUserContext(c);
     const id = extractNumericParam(c);
-    const result = await service.send(id, user.orgId);
+    const result = await service.send(id, user.orgId, delayMinMs, delayMaxMs);
     return c.json(result);
 });
 

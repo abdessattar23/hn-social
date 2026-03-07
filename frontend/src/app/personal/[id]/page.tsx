@@ -59,6 +59,13 @@ export default function PersonalDetailPage() {
     const [uploading, setUploading] = useState(false);
     const [sending, setSending] = useState(false);
     const [dragOver, setDragOver] = useState(false);
+
+    const [dailySendLimit, setDailySendLimit] = useState<number>(100);
+    const [delayMin, setDelayMin] = useState<number>(5);
+    const [delayMax, setDelayMax] = useState<number>(15);
+    const [isEditingLimit, setIsEditingLimit] = useState(false);
+    const [isEditingDelay, setIsEditingDelay] = useState(false);
+
     const fileInputRef = useRef<HTMLInputElement>(null);
     const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -86,6 +93,12 @@ export default function PersonalDetailPage() {
     useEffect(() => {
         if (!authed) return;
         load();
+
+        // Load initial daily limit
+        api.get('/org/send-limit')
+            .then((d: any) => setDailySendLimit(d.dailySendLimit))
+            .catch(() => { });
+
         return () => {
             if (pollRef.current) clearInterval(pollRef.current);
         };
@@ -117,12 +130,30 @@ export default function PersonalDetailPage() {
         if (file) handleUpload(file);
     };
 
+    const handleSaveLimit = async () => {
+        try {
+            await api.patch('/org/send-limit', { limit: dailySendLimit });
+            setIsEditingLimit(false);
+        } catch (err: any) {
+            setError(err.message || 'Failed to update limit');
+        }
+    };
+
     const handleSend = async () => {
         if (!confirm('Send all messages in this batch? This cannot be undone.')) return;
+
+        if (delayMin >= delayMax) {
+            setError('Minimum delay must be less than maximum delay');
+            return;
+        }
+
         setSending(true);
         setError('');
         try {
-            await api.post(`/personal-messages/${id}/send`);
+            await api.post(`/personal-messages/${id}/send`, {
+                delayMinMs: delayMin * 1000,
+                delayMaxMs: delayMax * 1000
+            });
             load();
         } catch (err: any) {
             setError(err.message || 'Failed to send');
@@ -208,8 +239,8 @@ export default function PersonalDetailPage() {
                     onDrop={handleDrop}
                     onClick={() => fileInputRef.current?.click()}
                     className={`rounded-2xl border-2 border-dashed p-10 text-center cursor-pointer mb-6 transition-all duration-200 ${dragOver
-                            ? 'border-primary bg-primary/5'
-                            : 'border-stroke hover:border-primary/50 bg-surface'
+                        ? 'border-primary bg-primary/5'
+                        : 'border-stroke hover:border-primary/50 bg-surface'
                         }`}
                 >
                     <input
@@ -237,28 +268,94 @@ export default function PersonalDetailPage() {
                 </div>
             )}
 
-            {/* Actions */}
-            <div className="flex items-center gap-3 mb-6">
-                {canSend && (
-                    <motion.button
-                        whileHover={{ scale: 1.02 }}
-                        whileTap={{ scale: 0.98 }}
-                        onClick={handleSend}
-                        disabled={sending}
-                        className="bg-primary hover:bg-accent text-white rounded-xl px-6 py-3 text-sm font-medium transition-colors disabled:opacity-50"
-                    >
-                        {sending ? 'Starting...' : `Send All (${batch.items.length})`}
-                    </motion.button>
-                )}
-                {batch.status === 'SENDING' && (
-                    <motion.button
-                        whileHover={{ scale: 1.02 }}
-                        whileTap={{ scale: 0.98 }}
-                        onClick={load}
-                        className="border border-stroke text-dark-5 hover:text-dark rounded-xl px-5 py-3 text-sm font-medium transition-colors"
-                    >
-                        Refresh
-                    </motion.button>
+            {/* Actions & Settings */}
+            <div className="flex flex-col gap-4 mb-6">
+                {(canSend || batch.status === 'SENDING') && (
+                    <div className="flex flex-wrap items-center gap-4 bg-surface-2/40 border border-stroke rounded-2xl p-4">
+                        <div className="flex items-center gap-4 flex-wrap flex-1">
+                            {/* Daily Limit Badge */}
+                            <div className="flex items-center gap-2 bg-surface border border-stroke rounded-xl px-3 py-2 shadow-sm">
+                                <span className="text-sm font-medium text-dark-5">Daily Limit:</span>
+                                {isEditingLimit ? (
+                                    <div className="flex items-center gap-2">
+                                        <input
+                                            type="number"
+                                            className="w-20 px-2 py-1 text-sm border border-stroke rounded-md bg-transparent focus:outline-none focus:border-primary"
+                                            value={dailySendLimit}
+                                            onChange={(e) => setDailySendLimit(Number(e.target.value))}
+                                            min={1}
+                                        />
+                                        <button onClick={handleSaveLimit} className="text-primary hover:text-accent text-sm font-medium">Save</button>
+                                        <button onClick={() => setIsEditingLimit(false)} className="text-dark-5 hover:text-dark text-sm">Cancel</button>
+                                    </div>
+                                ) : (
+                                    <div className="flex items-center gap-2 group cursor-pointer" onClick={() => setIsEditingLimit(true)}>
+                                        <span className="text-sm font-semibold text-dark">{dailySendLimit} msgs/day</span>
+                                        <svg className="w-3.5 h-3.5 text-dark-5 opacity-0 group-hover:opacity-100 transition-opacity" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                                            <path strokeLinecap="round" strokeLinejoin="round" d="m16.862 4.487 1.687-1.688a1.875 1.875 0 1 1 2.652 2.652L6.832 19.82a4.5 4.5 0 0 1-1.897 1.13l-2.685.8.8-2.685a4.5 4.5 0 0 1 1.13-1.897L16.863 4.487Zm0 0L19.5 7.125" />
+                                        </svg>
+                                    </div>
+                                )}
+                            </div>
+
+                            {/* Dynamic Delay Badge */}
+                            <div className="flex items-center gap-2 bg-surface border border-stroke rounded-xl px-3 py-2 shadow-sm">
+                                <span className="text-sm font-medium text-dark-5">Delay Between Messages:</span>
+                                {isEditingDelay ? (
+                                    <div className="flex items-center gap-2">
+                                        <input
+                                            type="number"
+                                            className="w-16 px-2 py-1 text-sm border border-stroke rounded-md bg-transparent focus:outline-none focus:border-primary"
+                                            value={delayMin}
+                                            onChange={(e) => setDelayMin(Number(e.target.value))}
+                                            min={1}
+                                        />
+                                        <span className="text-dark-5">-</span>
+                                        <input
+                                            type="number"
+                                            className="w-16 px-2 py-1 text-sm border border-stroke rounded-md bg-transparent focus:outline-none focus:border-primary"
+                                            value={delayMax}
+                                            onChange={(e) => setDelayMax(Number(e.target.value))}
+                                            min={1}
+                                        />
+                                        <span className="text-dark-5 text-sm">sec</span>
+                                        <button onClick={() => setIsEditingDelay(false)} className="text-primary hover:text-accent text-sm font-medium ml-1">Done</button>
+                                    </div>
+                                ) : (
+                                    <div className="flex items-center gap-2 group cursor-pointer" onClick={() => setIsEditingDelay(true)}>
+                                        <span className="text-sm font-semibold text-dark">{delayMin}-{delayMax} seconds</span>
+                                        <svg className="w-3.5 h-3.5 text-dark-5 opacity-0 group-hover:opacity-100 transition-opacity" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                                            <path strokeLinecap="round" strokeLinejoin="round" d="m16.862 4.487 1.687-1.688a1.875 1.875 0 1 1 2.652 2.652L6.832 19.82a4.5 4.5 0 0 1-1.897 1.13l-2.685.8.8-2.685a4.5 4.5 0 0 1 1.13-1.897L16.863 4.487Zm0 0L19.5 7.125" />
+                                        </svg>
+                                    </div>
+                                )}
+                            </div>
+                        </div>
+
+                        <div className="flex items-center gap-3 shrink-0">
+                            {canSend && (
+                                <motion.button
+                                    whileHover={{ scale: 1.02 }}
+                                    whileTap={{ scale: 0.98 }}
+                                    onClick={handleSend}
+                                    disabled={sending}
+                                    className="bg-primary hover:bg-accent text-white rounded-xl px-6 py-3 text-sm font-medium transition-colors disabled:opacity-50"
+                                >
+                                    {sending ? 'Starting...' : `Send All (${batch.items.length})`}
+                                </motion.button>
+                            )}
+                            {batch.status === 'SENDING' && (
+                                <motion.button
+                                    whileHover={{ scale: 1.02 }}
+                                    whileTap={{ scale: 0.98 }}
+                                    onClick={load}
+                                    className="border border-stroke bg-surface hover:bg-surface-2 text-dark font-semibold rounded-xl px-5 py-3 text-sm transition-colors"
+                                >
+                                    Refresh Progress
+                                </motion.button>
+                            )}
+                        </div>
+                    </div>
                 )}
             </div>
 

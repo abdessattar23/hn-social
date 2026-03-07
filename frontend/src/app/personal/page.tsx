@@ -216,12 +216,17 @@ export default function PersonalPage() {
                     <p className="text-dark-5 text-sm">Create a batch and upload a CSV with personalized messages for each recipient.</p>
                 </motion.div>
             ) : (
-                <StaggerContainer className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-                    {batches.map((b) => {
+                <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+                    {batches.map((b, i) => {
                         const sc = statusConfig[b.status] || statusConfig.DRAFT;
                         const progress = b.total > 0 ? Math.round(((b.sent + b.failed) / b.total) * 100) : 0;
                         return (
-                            <StaggerItem key={b.id}>
+                            <motion.div
+                                key={b.id}
+                                initial={{ opacity: 0, y: 16 }}
+                                animate={{ opacity: 1, y: 0 }}
+                                transition={{ duration: 0.3, delay: i * 0.05 }}
+                            >
                                 <AnimatedCard className="rounded-2xl bg-surface p-5 shadow-1 border border-stroke/60 hover:border-stroke/50">
                                     <div className="flex items-start justify-between mb-3">
                                         <div className="flex-1 min-w-0">
@@ -279,10 +284,10 @@ export default function PersonalPage() {
                                         </button>
                                     </div>
                                 </AnimatedCard>
-                            </StaggerItem>
+                            </motion.div>
                         );
                     })}
-                </StaggerContainer>
+                </div>
             )}
 
             <AnimatePresence>

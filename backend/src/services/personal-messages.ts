@@ -2,6 +2,7 @@ import { db } from "../db/client";
 import { NotFoundError, BadRequestError } from "../lib/errors";
 import * as unipile from "./unipile";
 import * as Papa from "papaparse";
+import { Cron } from "croner";
 import {
     createThrottlePolicy,
     throttledExecution,
@@ -227,6 +228,35 @@ export async function importCsv(
 
 // ── Dispatch Pipeline ──────────────────────────────────────────────────
 
+async function getDailySentCount(orgId: number): Promise<number> {
+    const today = new Date().toISOString().split('T')[0];
+    const startDate = `${today}T00:00:00.000Z`;
+    const endDate = `${today}T23:59:59.999Z`;
+
+    let total = 0;
+    try {
+        const { count: campCount } = await db.from("campaign_logs")
+            .select("id, campaigns!inner(org_id)", { count: "exact", head: true })
+            .eq("status", "SENT")
+            .eq("campaigns.org_id", orgId)
+            .gte("sent_at", startDate)
+            .lte("sent_at", endDate);
+        total += campCount || 0;
+    } catch { }
+
+    try {
+        const { count: pmCount } = await db.from("personal_message_items")
+            .select("id, personal_messages!inner(org_id)", { count: "exact", head: true })
+            .eq("status", "SENT")
+            .eq("personal_messages.org_id", orgId)
+            .gte("sent_at", startDate)
+            .lte("sent_at", endDate);
+        total += pmCount || 0;
+    } catch { }
+
+    return total;
+}
+
 async function dispatchItem(
     item: PersonalMessageItem,
     channel: ChannelProtocol,
@@ -271,7 +301,7 @@ async function dispatchItem(
     }
 }
 
-export async function send(id: number, orgId: number) {
+export async function send(id: number, orgId: number, delayMinMs?: number, delayMaxMs?: number) {
     const batch = await findOne(id, orgId);
     if (batch.status === "SENDING")
         throw new BadRequestError("Batch is already being sent");
@@ -288,7 +318,12 @@ export async function send(id: number, orgId: number) {
         .eq("id", id);
 
     const channel = (batch.channel || "EMAIL") as ChannelProtocol;
-    const throttlePolicy = createThrottlePolicy(channel);
+    const defaultPolicy = createThrottlePolicy(channel);
+    const throttlePolicy = {
+        minIntervalMs: delayMinMs ?? defaultPolicy.minIntervalMs,
+        maxIntervalMs: delayMaxMs ?? defaultPolicy.maxIntervalMs,
+        jitterFactor: defaultPolicy.jitterFactor,
+    };
 
     let sentCount = 0;
     let failedCount = 0;
@@ -300,11 +335,31 @@ export async function send(id: number, orgId: number) {
 
     // Fire off in background — don't block the response
     (async () => {
+        let dailyLimit: number | null = null;
+        try {
+            const { data: org } = await db.from("organizations").select("daily_send_limit").eq("id", orgId).single();
+            dailyLimit = org?.daily_send_limit ?? null;
+        } catch { }
+
         for (const item of batch.items as PersonalMessageItem[]) {
             // Skip already-sent items on retry
             if (item.status === "SENT") {
                 sentCount++;
                 continue;
+            }
+
+            if (dailyLimit !== null) {
+                const todaySent = await getDailySentCount(orgId);
+                if (todaySent >= dailyLimit) {
+                    console.warn(`[PersonalBatch ${id}] Daily limit reached (${todaySent}/${dailyLimit}). Pausing batch.`);
+                    telemetry.record("personal-batch.paused", id, { limit: dailyLimit, sentToday: todaySent });
+
+                    await db.from("personal_messages")
+                        .update({ sent: sentCount, failed: failedCount })
+                        .eq("id", id);
+
+                    return; // Stop processing this batch loop
+                }
             }
 
             if (!isFirst) {
@@ -365,4 +420,38 @@ export async function send(id: number, orgId: number) {
     });
 
     return { status: "SENDING", total: batch.items.length };
+}
+
+export function startPersonalMessageCron() {
+    new Cron("0 * * * *", async () => {
+        try {
+            const { data: sendingBatches } = await db
+                .from("personal_messages")
+                .select("id, org_id")
+                .eq("status", "SENDING");
+
+            for (const batch of sendingBatches || []) {
+                const dailySent = await getDailySentCount(batch.org_id);
+                const { data: org } = await db.from("organizations").select("daily_send_limit").eq("id", batch.org_id).single();
+                const dailyLimit = org?.daily_send_limit ?? null;
+
+                if (dailyLimit === null || dailySent < dailyLimit) {
+                    console.log(`[PersonalBatch Cron] Resuming paused batch ${batch.id}`);
+                    try {
+                        // Reset status to DRAFT briefly to bypass "Batch is already being sent" check
+                        await db.from("personal_messages").update({ status: "DRAFT" }).eq("id", batch.id);
+                        await send(batch.id, batch.org_id);
+                    } catch (err: any) {
+                        console.error(`[PersonalBatch Cron] Failed to resume batch ${batch.id}:`, err.message);
+                    }
+                }
+            }
+        } catch (err) {
+            console.error("Personal Messages Cron error:", err);
+        }
+    });
+
+    telemetry.record("orchestrationDaemon.personalMessages.started", "system", {
+        schedule: "0 * * * *",
+    });
 }

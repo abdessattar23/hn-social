@@ -105,7 +105,12 @@ class EmailDispatchAdapter implements LifecycleAware {
     },
   ) {
     await this.createAccountVerificationPipeline(accountId, orgId).resolve();
-    return this.gateway.listEmails({ accountId, ...params });
+    try {
+      return await this.gateway.listEmails({ accountId, ...params });
+    } catch (err) {
+      // Return empty list if the account connection is broken
+      return { items: [], cursor: null, error: (err as Error).message };
+    }
   }
 
   async materializeSingleMessage(
@@ -119,7 +124,21 @@ class EmailDispatchAdapter implements LifecycleAware {
 
   async materializeFolderHierarchy(orgId: number, accountId: string) {
     await this.createAccountVerificationPipeline(accountId, orgId).resolve();
-    return this.gateway.listEmailFolders(accountId);
+    try {
+      return await this.gateway.listEmailFolders(accountId);
+    } catch {
+      // Unipile may not support the email_folders endpoint in all API versions.
+      // Fall back to standard folder names that the frontend already displays.
+      return {
+        items: [
+          { id: "INBOX", name: "INBOX" },
+          { id: "SENT", name: "SENT" },
+          { id: "DRAFTS", name: "DRAFTS" },
+          { id: "TRASH", name: "TRASH" },
+          { id: "SPAM", name: "SPAM" },
+        ],
+      };
+    }
   }
 
   async dispatchReply(
