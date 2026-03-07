@@ -64,15 +64,19 @@ personalMessagesRouter.post("/:id/import-csv", async (c) => {
 personalMessagesRouter.post("/:id/send", async (c) => {
     let delayMinMs: number | undefined;
     let delayMaxMs: number | undefined;
+    let excludeItemIds: number[] | undefined;
+    let emergencyMode: boolean | undefined;
     try {
         const body = await c.req.json();
         delayMinMs = body.delayMinMs;
         delayMaxMs = body.delayMaxMs;
+        excludeItemIds = body.excludeItemIds;
+        emergencyMode = body.emergencyMode;
     } catch { }
 
     const user = resolveUserContext(c);
     const id = extractNumericParam(c);
-    const result = await service.send(id, user.orgId, delayMinMs, delayMaxMs);
+    const result = await service.send(id, user.orgId, delayMinMs, delayMaxMs, excludeItemIds, emergencyMode);
     return c.json(result);
 });
 

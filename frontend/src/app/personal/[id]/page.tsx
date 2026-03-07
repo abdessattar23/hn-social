@@ -66,6 +66,12 @@ export default function PersonalDetailPage() {
     const [isEditingLimit, setIsEditingLimit] = useState(false);
     const [isEditingDelay, setIsEditingDelay] = useState(false);
 
+    // Selection state
+    const [excludedItemIds, setExcludedItemIds] = useState<Set<number>>(new Set());
+
+    // Emergency mode
+    const [emergencyMode, setEmergencyMode] = useState(false);
+
     const fileInputRef = useRef<HTMLInputElement>(null);
     const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -140,7 +146,7 @@ export default function PersonalDetailPage() {
     };
 
     const handleSend = async () => {
-        if (!confirm('Send all messages in this batch? This cannot be undone.')) return;
+        if (!confirm('Send to selected messages in this batch? Deselected messages will be removed permanently.')) return;
 
         if (delayMin >= delayMax) {
             setError('Minimum delay must be less than maximum delay');
@@ -151,15 +157,49 @@ export default function PersonalDetailPage() {
         setError('');
         try {
             await api.post(`/personal-messages/${id}/send`, {
-                delayMinMs: delayMin * 1000,
-                delayMaxMs: delayMax * 1000
+                delayMinMs: emergencyMode ? 0 : delayMin * 1000,
+                delayMaxMs: emergencyMode ? 0 : delayMax * 1000,
+                excludeItemIds: Array.from(excludedItemIds),
+                emergencyMode
             });
+            // Clear selections after sending
+            setExcludedItemIds(new Set());
             load();
         } catch (err: any) {
             setError(err.message || 'Failed to send');
         } finally {
             setSending(false);
         }
+    };
+
+    const handleToggleItem = (itemId: number) => {
+        setExcludedItemIds(prev => {
+            const next = new Set(prev);
+            if (next.has(itemId)) {
+                next.delete(itemId);
+            } else {
+                next.add(itemId);
+            }
+            return next;
+        });
+    };
+
+    const handleToggleAll = (currentItems: Item[]) => {
+        const sendableItems = currentItems.filter(i => i.status === 'PENDING' || i.status === 'FAILED');
+        if (sendableItems.length === 0) return;
+
+        const allExcluded = sendableItems.every(i => excludedItemIds.has(i.id));
+        setExcludedItemIds(prev => {
+            const next = new Set(prev);
+            if (allExcluded) {
+                // If all are excluded, select them all (clear exclusions for these items)
+                sendableItems.forEach(i => next.delete(i.id));
+            } else {
+                // Exclude all sendable items
+                sendableItems.forEach(i => next.add(i.id));
+            }
+            return next;
+        });
     };
 
     if (!authed) return null;
@@ -330,6 +370,22 @@ export default function PersonalDetailPage() {
                                     </div>
                                 )}
                             </div>
+
+                            {/* Emergency Mode Toggle */}
+                            <button
+                                onClick={() => setEmergencyMode(!emergencyMode)}
+                                className={`flex items-center gap-2 rounded-xl px-3 py-2 shadow-sm border transition-all duration-200 ${emergencyMode
+                                    ? 'bg-red/10 border-red/30 text-red'
+                                    : 'bg-surface border-stroke text-dark-5 hover:border-dark-6'
+                                    }`}
+                            >
+                                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                                    <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 13.5l10.5-11.25L12 10.5h8.25L9.75 21.75 12 13.5H3.75z" />
+                                </svg>
+                                <span className="text-sm font-semibold whitespace-nowrap">
+                                    {emergencyMode ? '⚡ Emergency ON' : 'Emergency'}
+                                </span>
+                            </button>
                         </div>
 
                         <div className="flex items-center gap-3 shrink-0">
@@ -339,9 +395,9 @@ export default function PersonalDetailPage() {
                                     whileTap={{ scale: 0.98 }}
                                     onClick={handleSend}
                                     disabled={sending}
-                                    className="bg-primary hover:bg-accent text-white rounded-xl px-6 py-3 text-sm font-medium transition-colors disabled:opacity-50"
+                                    className={`text-white rounded-xl px-6 py-3 text-sm font-medium transition-colors disabled:opacity-50 ${emergencyMode ? 'bg-red hover:bg-red/80' : 'bg-primary hover:bg-accent'}`}
                                 >
-                                    {sending ? 'Starting...' : `Send All (${batch.items.length})`}
+                                    {sending ? 'Starting...' : `${emergencyMode ? '⚡ ' : ''}Send Selected (${batch.items.filter(i => !excludedItemIds.has(i.id) && (i.status === 'PENDING' || i.status === 'FAILED')).length})`}
                                 </motion.button>
                             )}
                             {batch.status === 'SENDING' && (
@@ -366,6 +422,18 @@ export default function PersonalDetailPage() {
                         <table className="w-full text-sm">
                             <thead>
                                 <tr className="border-b border-stroke bg-surface-2">
+                                    <th className="w-12 px-5 py-3">
+                                        <input
+                                            type="checkbox"
+                                            className="rounded border-stroke text-primary focus:ring-primary h-4 w-4 bg-transparent cursor-pointer"
+                                            checked={
+                                                batch.items.filter(i => i.status === 'PENDING' || i.status === 'FAILED').length > 0 &&
+                                                batch.items.filter(i => i.status === 'PENDING' || i.status === 'FAILED').every(i => !excludedItemIds.has(i.id))
+                                            }
+                                            onChange={() => handleToggleAll(batch.items)}
+                                            disabled={batch.status === 'SENDING' || batch.status === 'SENT'}
+                                        />
+                                    </th>
                                     <th className="text-left px-5 py-3 font-medium text-dark-5 uppercase text-xs tracking-wider">Name</th>
                                     <th className="text-left px-5 py-3 font-medium text-dark-5 uppercase text-xs tracking-wider">Identifier</th>
                                     {batch.channel === 'EMAIL' && (
@@ -378,8 +446,19 @@ export default function PersonalDetailPage() {
                             <tbody>
                                 {batch.items.map((item) => {
                                     const isc = statusConfig[item.status] || statusConfig.PENDING;
+                                    const isSendable = item.status === 'PENDING' || item.status === 'FAILED';
+
                                     return (
-                                        <tr key={item.id} className="border-b border-stroke/40 last:border-none hover:bg-surface-2/50 transition-colors">
+                                        <tr key={item.id} className={`border-b border-stroke/40 last:border-none transition-colors ${excludedItemIds.has(item.id) ? 'bg-surface-2/30 opacity-75' : 'hover:bg-surface-2/50'}`}>
+                                            <td className="px-5 py-3">
+                                                <input
+                                                    type="checkbox"
+                                                    className="rounded border-stroke text-primary focus:ring-primary h-4 w-4 disabled:opacity-50 disabled:cursor-not-allowed bg-transparent cursor-pointer"
+                                                    checked={!excludedItemIds.has(item.id)}
+                                                    onChange={() => handleToggleItem(item.id)}
+                                                    disabled={!isSendable || batch.status === 'SENDING' || batch.status === 'SENT'}
+                                                />
+                                            </td>
                                             <td className="px-5 py-3 font-medium text-dark">{item.recipient_name}</td>
                                             <td className="px-5 py-3 text-dark-5 font-mono text-xs">{item.recipient_identifier}</td>
                                             {batch.channel === 'EMAIL' && (

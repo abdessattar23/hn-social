@@ -203,6 +203,38 @@ export async function importCsv(
     if (items.length === 0)
         throw new BadRequestError("No valid rows found in CSV");
 
+    // Auto-resolve names to chat IDs for Unipile
+    if (batch.channel === "WHATSAPP" || batch.channel === "LINKEDIN") {
+        try {
+            const chatsData = await unipile.listAllChats(batch.channel);
+            const chats = chatsData.items || [];
+
+            const chatMap = new Map<string, string>();
+            for (const c of chats as any[]) {
+                if (c.name) {
+                    // STRICT: Only use chats from the active account to avoid
+                    // 401 errors from disconnected session chat IDs
+                    if (c.account_id !== batch.account_id) continue;
+                    const nameKey = c.name.trim().toLowerCase();
+                    chatMap.set(nameKey, c.id);
+                }
+            }
+
+            for (const item of items) {
+                const ident = item.recipient_identifier.trim().toLowerCase();
+                const nameIdent = item.recipient_name.trim().toLowerCase();
+
+                if (chatMap.has(ident)) {
+                    item.recipient_identifier = chatMap.get(ident)!;
+                } else if (chatMap.has(nameIdent)) {
+                    item.recipient_identifier = chatMap.get(nameIdent)!;
+                }
+            }
+        } catch (err) {
+            console.error("Failed to preload chats for ID resolution:", err);
+        }
+    }
+
     // Clear any existing items first
     await db
         .from("personal_message_items")
@@ -301,7 +333,7 @@ async function dispatchItem(
     }
 }
 
-export async function send(id: number, orgId: number, delayMinMs?: number, delayMaxMs?: number) {
+export async function send(id: number, orgId: number, delayMinMs?: number, delayMaxMs?: number, excludeItemIds?: number[], emergencyMode?: boolean) {
     const batch = await findOne(id, orgId);
     if (batch.status === "SENDING")
         throw new BadRequestError("Batch is already being sent");
@@ -310,6 +342,23 @@ export async function send(id: number, orgId: number, delayMinMs?: number, delay
 
     if (!batch.items || batch.items.length === 0)
         throw new BadRequestError("No items to send. Import a CSV first.");
+
+    // Delete excluded items if any
+    if (excludeItemIds && excludeItemIds.length > 0) {
+        await db.from("personal_message_items")
+            .delete()
+            .eq("personal_message_id", id)
+            .in("id", excludeItemIds);
+
+        batch.items = batch.items.filter((i: any) => !excludeItemIds.includes(i.id));
+        const newTotal = batch.items.length;
+
+        await db.from("personal_messages").update({ total: newTotal }).eq("id", id);
+    }
+
+    if (batch.items.length === 0) {
+        throw new BadRequestError("No items left to send after exclusions.");
+    }
 
     // Mark as SENDING
     await db
@@ -348,7 +397,7 @@ export async function send(id: number, orgId: number, delayMinMs?: number, delay
                 continue;
             }
 
-            if (dailyLimit !== null) {
+            if (!emergencyMode && dailyLimit !== null) {
                 const todaySent = await getDailySentCount(orgId);
                 if (todaySent >= dailyLimit) {
                     console.warn(`[PersonalBatch ${id}] Daily limit reached (${todaySent}/${dailyLimit}). Pausing batch.`);
@@ -362,7 +411,7 @@ export async function send(id: number, orgId: number, delayMinMs?: number, delay
                 }
             }
 
-            if (!isFirst) {
+            if (!isFirst && !emergencyMode) {
                 await throttledExecution(throttlePolicy);
             }
             isFirst = false;
