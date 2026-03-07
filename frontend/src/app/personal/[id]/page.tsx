@@ -184,6 +184,24 @@ export default function PersonalDetailPage() {
     }, [batch?.status, id]);
 
     const handleSend = async () => {
+        // For EMAIL batches, ensure subject is set
+        if (batch?.channel === 'EMAIL') {
+            const hasSubject = batch.items.some(i => i.subject);
+            if (!hasSubject && !batchSubject.trim()) {
+                setError('Please enter an email subject before sending.');
+                return;
+            }
+            // Auto-apply subject if the user typed one
+            if (batchSubject.trim()) {
+                try {
+                    await api.patch(`/personal-messages/${id}/subject`, { subject: batchSubject.trim() });
+                } catch (err: any) {
+                    setError(err.message || 'Failed to set subject');
+                    return;
+                }
+            }
+        }
+
         if (!confirm('Send to selected messages in this batch? Deselected messages will be removed permanently.')) return;
 
         if (delayMin >= delayMax) {
