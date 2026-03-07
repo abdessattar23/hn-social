@@ -72,6 +72,12 @@ export default function PersonalDetailPage() {
     // Emergency mode
     const [emergencyMode, setEmergencyMode] = useState(false);
 
+    // Live logs
+    type LogEntry = { timestamp: string; level: string; message: string };
+    const [logs, setLogs] = useState<LogEntry[]>([]);
+    const logEndRef = useRef<HTMLDivElement>(null);
+    const logPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
     const fileInputRef = useRef<HTMLInputElement>(null);
     const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -144,6 +150,32 @@ export default function PersonalDetailPage() {
             setError(err.message || 'Failed to update limit');
         }
     };
+
+    // Poll logs while sending
+    useEffect(() => {
+        if (batch?.status === 'SENDING') {
+            // Start polling logs
+            const pollLogs = () => {
+                api.get(`/personal-messages/${id}/logs`)
+                    .then((d: any) => {
+                        setLogs(d.logs || []);
+                        setTimeout(() => logEndRef.current?.scrollIntoView({ behavior: 'smooth' }), 100);
+                    })
+                    .catch(() => { });
+            };
+            pollLogs();
+            logPollRef.current = setInterval(pollLogs, 1500);
+        } else if (batch?.status === 'SENT' || batch?.status === 'FAILED') {
+            // Final fetch
+            api.get(`/personal-messages/${id}/logs`)
+                .then((d: any) => setLogs(d.logs || []))
+                .catch(() => { });
+            if (logPollRef.current) { clearInterval(logPollRef.current); logPollRef.current = null; }
+        }
+        return () => {
+            if (logPollRef.current) { clearInterval(logPollRef.current); logPollRef.current = null; }
+        };
+    }, [batch?.status, id]);
 
     const handleSend = async () => {
         if (!confirm('Send to selected messages in this batch? Deselected messages will be removed permanently.')) return;
@@ -267,6 +299,43 @@ export default function PersonalDetailPage() {
                             animate={{ width: `${progress}%` }}
                             transition={{ duration: 0.4, ease: 'easeOut' }}
                         />
+                    </div>
+                </div>
+            )}
+
+            {/* Live Terminal Logs */}
+            {logs.length > 0 && (
+                <div className="rounded-2xl overflow-hidden shadow-1 border border-stroke/60 mb-6">
+                    <div className="bg-[#1a1a2e] px-5 py-3 flex items-center justify-between">
+                        <div className="flex items-center gap-2">
+                            <div className="flex gap-1.5">
+                                <span className="w-3 h-3 rounded-full bg-red/80" />
+                                <span className="w-3 h-3 rounded-full bg-yellow-400/80" />
+                                <span className="w-3 h-3 rounded-full bg-green/80" />
+                            </div>
+                            <span className="text-gray-400 text-xs font-mono ml-2">dispatch.log</span>
+                        </div>
+                        {batch.status === 'SENDING' && (
+                            <span className="text-green text-xs font-mono animate-pulse">● LIVE</span>
+                        )}
+                    </div>
+                    <div className="bg-[#16213e] max-h-[280px] overflow-y-auto px-5 py-3 font-mono text-xs leading-relaxed">
+                        {logs.map((log, i) => {
+                            const time = new Date(log.timestamp).toLocaleTimeString();
+                            const colors: Record<string, string> = {
+                                info: 'text-blue-300',
+                                warn: 'text-yellow-300',
+                                error: 'text-red-400',
+                                success: 'text-green-400',
+                            };
+                            return (
+                                <div key={i} className="flex gap-3">
+                                    <span className="text-gray-500 shrink-0">{time}</span>
+                                    <span className={colors[log.level] || 'text-gray-300'}>{log.message}</span>
+                                </div>
+                            );
+                        })}
+                        <div ref={logEndRef} />
                     </div>
                 </div>
             )}

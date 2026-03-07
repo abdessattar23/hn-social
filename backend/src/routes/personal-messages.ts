@@ -60,6 +60,13 @@ personalMessagesRouter.post("/:id/import-csv", async (c) => {
     return c.json(result);
 });
 
+// Get batch dispatch logs
+personalMessagesRouter.get("/:id/logs", async (c) => {
+    const id = extractNumericParam(c);
+    const logs = service.getBatchLogs(id);
+    return c.json({ logs });
+});
+
 // Send all items in a batch
 personalMessagesRouter.post("/:id/send", async (c) => {
     let delayMinMs: number | undefined;

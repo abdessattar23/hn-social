@@ -12,6 +12,37 @@ import type { ChannelProtocol } from "../core/types";
 
 const telemetry = TelemetryCollector.shared();
 
+// ── In-Memory Batch Logs ───────────────────────────────────────────────
+
+interface BatchLogEntry {
+    timestamp: string;
+    level: 'info' | 'warn' | 'error' | 'success';
+    message: string;
+}
+
+const batchLogs = new Map<number, BatchLogEntry[]>();
+
+function emitLog(batchId: number, level: BatchLogEntry['level'], message: string) {
+    if (!batchLogs.has(batchId)) batchLogs.set(batchId, []);
+    const entry = { timestamp: new Date().toISOString(), level, message };
+    batchLogs.get(batchId)!.push(entry);
+    // Also log to console
+    console.log(`[PersonalBatch ${batchId}] [${entry.timestamp}] ${message}`);
+}
+
+export function getBatchLogs(batchId: number): BatchLogEntry[] {
+    return batchLogs.get(batchId) || [];
+}
+
+function cleanupOldLogs() {
+    const oneHourAgo = Date.now() - 3600_000;
+    for (const [id, logs] of batchLogs.entries()) {
+        if (logs.length > 0 && new Date(logs[logs.length - 1].timestamp).getTime() < oneHourAgo) {
+            batchLogs.delete(id);
+        }
+    }
+}
+
 // ── Types ──────────────────────────────────────────────────────────────
 
 interface PersonalMessageBatch {
@@ -378,9 +409,8 @@ export async function send(id: number, orgId: number, delayMinMs?: number, delay
     let failedCount = 0;
     let isFirst = true;
 
-    console.log(
-        `[PersonalBatch ${id}] Starting: "${batch.name}" | channel=${channel} | total=${batch.items.length}`,
-    );
+    emitLog(id, 'info', `Starting batch "${batch.name}" | channel=${channel} | items=${batch.items.length}`);
+    if (emergencyMode) emitLog(id, 'warn', '⚡ EMERGENCY MODE — all delays and limits bypassed');
 
     // Fire off in background — don't block the response
     (async () => {
@@ -388,6 +418,7 @@ export async function send(id: number, orgId: number, delayMinMs?: number, delay
         try {
             const { data: org } = await db.from("organizations").select("daily_send_limit").eq("id", orgId).single();
             dailyLimit = org?.daily_send_limit ?? null;
+            if (dailyLimit && !emergencyMode) emitLog(id, 'info', `Daily send limit: ${dailyLimit}`);
         } catch { }
 
         for (const item of batch.items as PersonalMessageItem[]) {
@@ -400,36 +431,38 @@ export async function send(id: number, orgId: number, delayMinMs?: number, delay
             if (!emergencyMode && dailyLimit !== null) {
                 const todaySent = await getDailySentCount(orgId);
                 if (todaySent >= dailyLimit) {
-                    console.warn(`[PersonalBatch ${id}] Daily limit reached (${todaySent}/${dailyLimit}). Pausing batch.`);
+                    emitLog(id, 'warn', `Daily limit reached (${todaySent}/${dailyLimit}). Pausing batch.`);
                     telemetry.record("personal-batch.paused", id, { limit: dailyLimit, sentToday: todaySent });
 
                     await db.from("personal_messages")
                         .update({ sent: sentCount, failed: failedCount })
                         .eq("id", id);
 
-                    return; // Stop processing this batch loop
+                    return;
                 }
             }
 
             if (!isFirst && !emergencyMode) {
+                const delay = throttlePolicy.minIntervalMs + Math.random() * (throttlePolicy.maxIntervalMs - throttlePolicy.minIntervalMs);
+                emitLog(id, 'info', `Waiting ${(delay / 1000).toFixed(1)}s before next message...`);
                 await throttledExecution(throttlePolicy);
             }
             isFirst = false;
 
-            console.log(
-                `[PersonalBatch ${id}] Sending to ${item.recipient_identifier} (${item.recipient_name})`,
-            );
+            emitLog(id, 'info', `Sending to ${item.recipient_name} (${item.recipient_identifier.substring(0, 12)}...)`);
 
             const result = await dispatchItem(item, channel, batch.account_id, orgId);
 
             if (result.status === "SENT") {
                 sentCount++;
+                emitLog(id, 'success', `✓ Delivered to ${item.recipient_name}`);
                 await db
                     .from("personal_message_items")
                     .update({ status: "SENT", sent_at: new Date().toISOString() })
                     .eq("id", item.id);
             } else {
                 failedCount++;
+                emitLog(id, 'error', `✗ Failed: ${item.recipient_name} — ${result.error}`);
                 await db
                     .from("personal_message_items")
                     .update({ status: "FAILED", error: result.error })
@@ -452,9 +485,8 @@ export async function send(id: number, orgId: number, delayMinMs?: number, delay
             .update({ status: finalStatus, sent: sentCount, failed: failedCount })
             .eq("id", id);
 
-        console.log(
-            `[PersonalBatch ${id}] Complete: ${sentCount} sent, ${failedCount} failed`,
-        );
+        emitLog(id, sentCount > 0 ? 'success' : 'error', `Batch complete: ${sentCount} sent, ${failedCount} failed`);
+        cleanupOldLogs();
 
         telemetry.record("personal-batch.completed", id, {
             sent: sentCount,
