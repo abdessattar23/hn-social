@@ -70,7 +70,7 @@ interface PersonalMessageItem {
     status: string;
     error: string | null;
     sent_at: string | null;
-    application_id: number | null;
+    application_id: string | null;
 }
 
 // ── CSV Column Detection ───────────────────────────────────────────────
