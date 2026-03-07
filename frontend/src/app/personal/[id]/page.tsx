@@ -497,21 +497,41 @@ export default function PersonalDetailPage() {
                                 )}
                             </div>
 
-                            {/* Emergency Mode Toggle */}
-                            <button
-                                onClick={() => setEmergencyMode(!emergencyMode)}
-                                className={`flex items-center gap-2 rounded-xl px-3 py-2 shadow-sm border transition-all duration-200 ${emergencyMode
-                                    ? 'bg-red/10 border-red/30 text-red'
-                                    : 'bg-surface border-stroke text-dark-5 hover:border-dark-6'
-                                    }`}
-                            >
-                                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                                    <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 13.5l10.5-11.25L12 10.5h8.25L9.75 21.75 12 13.5H3.75z" />
-                                </svg>
-                                <span className="text-sm font-semibold whitespace-nowrap">
-                                    {emergencyMode ? '⚡ Emergency ON' : 'Emergency'}
-                                </span>
-                            </button>
+                            {/* Emergency / Stop Button */}
+                            {batch.status === 'SENDING' ? (
+                                <motion.button
+                                    whileHover={{ scale: 1.05 }}
+                                    whileTap={{ scale: 0.95 }}
+                                    onClick={async () => {
+                                        try {
+                                            await api.post(`/personal-messages/${id}/stop`);
+                                        } catch (err: any) {
+                                            setError(err.message || 'Failed to stop');
+                                        }
+                                    }}
+                                    className="flex items-center gap-2 rounded-xl px-4 py-2 shadow-sm border border-red/40 bg-red text-white hover:bg-red/80 transition-all duration-200 animate-pulse"
+                                >
+                                    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                                        <path strokeLinecap="round" strokeLinejoin="round" d="M5.25 7.5A2.25 2.25 0 017.5 5.25h9a2.25 2.25 0 012.25 2.25v9a2.25 2.25 0 01-2.25 2.25h-9a2.25 2.25 0 01-2.25-2.25v-9z" />
+                                    </svg>
+                                    <span className="text-sm font-bold whitespace-nowrap">Stop Sending</span>
+                                </motion.button>
+                            ) : (
+                                <button
+                                    onClick={() => setEmergencyMode(!emergencyMode)}
+                                    className={`flex items-center gap-2 rounded-xl px-3 py-2 shadow-sm border transition-all duration-200 ${emergencyMode
+                                        ? 'bg-red/10 border-red/30 text-red'
+                                        : 'bg-surface border-stroke text-dark-5 hover:border-dark-6'
+                                        }`}
+                                >
+                                    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                                        <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 13.5l10.5-11.25L12 10.5h8.25L9.75 21.75 12 13.5H3.75z" />
+                                    </svg>
+                                    <span className="text-sm font-semibold whitespace-nowrap">
+                                        {emergencyMode ? '⚡ Emergency ON' : 'Emergency'}
+                                    </span>
+                                </button>
+                            )}
                         </div>
 
                         <div className="flex items-center gap-3 shrink-0">

@@ -59,6 +59,14 @@ personalMessagesRouter.post("/sync-applications", async (c) => {
     const batch = await service.syncFromApplications(statusValue, statusField, accountId, user.orgId, user.id, eventId);
     return c.json(batch, 201);
 });
+
+// Stop a sending batch
+personalMessagesRouter.post("/:id/stop", async (c) => {
+    const id = extractNumericParam(c);
+    service.stopBatch(id);
+    return c.json({ stopped: true });
+});
+
 // Update subject for all items in a batch
 personalMessagesRouter.patch("/:id/subject", async (c) => {
     const user = resolveUserContext(c);

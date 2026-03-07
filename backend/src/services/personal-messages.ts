@@ -492,6 +492,14 @@ export async function importCsv(
 
 // ── Dispatch Pipeline ──────────────────────────────────────────────────
 
+// In-memory abort flags for stopping batch sends
+const abortFlags = new Map<number, boolean>();
+
+export function stopBatch(id: number) {
+    abortFlags.set(id, true);
+    emitLog(id, 'warn', '🛑 STOP requested — halting after current message...');
+}
+
 async function getDailySentCount(orgId: number): Promise<number> {
     const today = new Date().toISOString().split('T')[0];
     const startDate = `${today}T00:00:00.000Z`;
@@ -613,6 +621,9 @@ export async function send(id: number, orgId: number, delayMinMs?: number, delay
     emitLog(id, 'info', `Starting batch "${batch.name}" | channel=${channel} | items=${batch.items.length}`);
     if (emergencyMode) emitLog(id, 'warn', '⚡ EMERGENCY MODE — all delays and limits bypassed');
 
+    // Clear any previous abort flag
+    abortFlags.delete(id);
+
     // Fire off in background — don't block the response
     (async () => {
         let dailyLimit: number | null = null;
@@ -623,6 +634,17 @@ export async function send(id: number, orgId: number, delayMinMs?: number, delay
         } catch { }
 
         for (const item of batch.items as PersonalMessageItem[]) {
+            // Check abort flag
+            if (abortFlags.get(id)) {
+                emitLog(id, 'warn', `🛑 Batch stopped by user. ${sentCount} sent, ${failedCount} failed.`);
+                abortFlags.delete(id);
+                await db.from("personal_messages")
+                    .update({ status: "DRAFT", sent: sentCount, failed: failedCount })
+                    .eq("id", id);
+                telemetry.record("personal-batch.stopped", id, { sent: sentCount, failed: failedCount });
+                return;
+            }
+
             // Skip already-sent items on retry
             if (item.status === "SENT") {
                 sentCount++;
