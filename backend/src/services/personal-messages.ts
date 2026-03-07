@@ -302,6 +302,8 @@ export async function syncFromApplications(
     userId: string,
     eventId?: number,
 ) {
+    console.log(`[SyncApplications] Starting sync | statusField=${statusField} statusValue=${statusValue} accountId=${accountId} orgId=${orgId} eventId=${eventId}`);
+
     // Verify account
     const { data: account } = await db
         .from("connected_accounts")
@@ -328,6 +330,10 @@ export async function syncFromApplications(
     }
 
     const applications = await fetchAllRows<any>(query);
+    console.log(`[SyncApplications] Fetched ${applications.length} applications`);
+    if (applications.length > 0) {
+        console.log(`[SyncApplications] Sample app:`, JSON.stringify(applications[0]));
+    }
 
     if (applications.length === 0) {
         const range = event ? ` between ${event.startDate} and ${event.endDate ?? "now"}` : "";
@@ -342,6 +348,7 @@ export async function syncFromApplications(
 
     // Derive the target status to apply on hackathon_applications after send
     const syncTargetStatus = isAccepted ? "accepted" : "rejected";
+    console.log(`[SyncApplications] isAccepted=${isAccepted} syncTargetStatus=${syncTargetStatus} batchName=${batchName}`);
 
     // Create batch
     const { data: batch, error: batchErr } = await db
@@ -356,7 +363,11 @@ export async function syncFromApplications(
         })
         .select()
         .single();
-    if (batchErr) throw new BadRequestError(batchErr.message);
+    if (batchErr) {
+        console.error(`[SyncApplications] Batch creation failed:`, batchErr.message);
+        throw new BadRequestError(batchErr.message);
+    }
+    console.log(`[SyncApplications] Batch created: id=${batch.id} sync_target_status=${batch.sync_target_status}`);
 
     // Generate items with dynamic event name in templates
     const templateFn = isAccepted ? ACCEPTANCE_TEMPLATE : REJECTION_TEMPLATE;
@@ -374,12 +385,18 @@ export async function syncFromApplications(
         };
     });
 
+    console.log(`[SyncApplications] Generated ${items.length} items. Sample:`, JSON.stringify({ application_id: items[0]?.application_id, recipient: items[0]?.recipient_identifier }));
+
     for (let i = 0; i < items.length; i += PAGE_SIZE) {
         const chunk = items.slice(i, i + PAGE_SIZE);
+        console.log(`[SyncApplications] Inserting chunk ${i / PAGE_SIZE + 1} (${chunk.length} items)`);
         const { error: insertErr } = await db
             .from("personal_message_items")
             .insert(chunk);
-        if (insertErr) throw new BadRequestError(insertErr.message);
+        if (insertErr) {
+            console.error(`[SyncApplications] Insert failed:`, insertErr.message);
+            throw new BadRequestError(insertErr.message);
+        }
     }
 
     // Update total
@@ -692,17 +709,24 @@ export async function send(id: number, orgId: number, delayMinMs?: number, delay
                     .eq("id", item.id);
 
                 // Update hackathon_applications status if this item was synced from applications
+                console.log(`[PersonalBatch ${id}] Item ${item.id}: application_id=${item.application_id} sync_target_status=${(batch as PersonalMessageBatch).sync_target_status}`);
                 if (item.application_id && (batch as PersonalMessageBatch).sync_target_status) {
                     const targetStatus = (batch as PersonalMessageBatch).sync_target_status;
-                    const { error: appUpdateErr } = await db
+                    console.log(`[PersonalBatch ${id}] Updating hackathon_applications id=${item.application_id} → status=${targetStatus}`);
+                    const { error: appUpdateErr, data: appUpdateData } = await db
                         .from("hackathon_applications")
                         .update({ status: targetStatus })
-                        .eq("id", item.application_id);
+                        .eq("id", item.application_id)
+                        .select("id, status");
                     if (appUpdateErr) {
+                        console.error(`[PersonalBatch ${id}] Application update FAILED:`, appUpdateErr.message);
                         emitLog(id, 'warn', `Failed to update application ${item.application_id} status: ${appUpdateErr.message}`);
                     } else {
+                        console.log(`[PersonalBatch ${id}] Application update SUCCESS:`, JSON.stringify(appUpdateData));
                         emitLog(id, 'info', `Updated application ${item.application_id} status → ${targetStatus}`);
                     }
+                } else {
+                    console.log(`[PersonalBatch ${id}] Skipping application update — no application_id or sync_target_status`);
                 }
             } else {
                 failedCount++;
