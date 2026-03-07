@@ -57,6 +57,7 @@ interface PersonalMessageBatch {
     sent: number;
     failed: number;
     created_at: string;
+    sync_target_status: string | null;
 }
 
 interface PersonalMessageItem {
@@ -69,6 +70,7 @@ interface PersonalMessageItem {
     status: string;
     error: string | null;
     sent_at: string | null;
+    application_id: number | null;
 }
 
 // ── CSV Column Detection ───────────────────────────────────────────────
@@ -338,6 +340,9 @@ export async function syncFromApplications(
     const shortLabel = event ? `HN${event.id}` : "HN";
     const batchName = `${shortLabel} ${label} — ${new Date().toLocaleDateString("en-GB")}`;
 
+    // Derive the target status to apply on hackathon_applications after send
+    const syncTargetStatus = isAccepted ? "accepted" : "rejected";
+
     // Create batch
     const { data: batch, error: batchErr } = await db
         .from("personal_messages")
@@ -347,6 +352,7 @@ export async function syncFromApplications(
             account_id: accountId,
             org_id: orgId,
             user_id: userId,
+            sync_target_status: syncTargetStatus,
         })
         .select()
         .single();
@@ -364,6 +370,7 @@ export async function syncFromApplications(
             message_body: tmpl.body,
             subject: tmpl.subject,
             status: "PENDING",
+            application_id: app.id,
         };
     });
 
@@ -683,6 +690,20 @@ export async function send(id: number, orgId: number, delayMinMs?: number, delay
                     .from("personal_message_items")
                     .update({ status: "SENT", sent_at: new Date().toISOString() })
                     .eq("id", item.id);
+
+                // Update hackathon_applications status if this item was synced from applications
+                if (item.application_id && (batch as PersonalMessageBatch).sync_target_status) {
+                    const targetStatus = (batch as PersonalMessageBatch).sync_target_status;
+                    const { error: appUpdateErr } = await db
+                        .from("hackathon_applications")
+                        .update({ status: targetStatus })
+                        .eq("id", item.application_id);
+                    if (appUpdateErr) {
+                        emitLog(id, 'warn', `Failed to update application ${item.application_id} status: ${appUpdateErr.message}`);
+                    } else {
+                        emitLog(id, 'info', `Updated application ${item.application_id} status → ${targetStatus}`);
+                    }
+                }
             } else {
                 failedCount++;
                 emitLog(id, 'error', `✗ Failed: ${item.recipient_name} — ${result.error}`);

@@ -16,6 +16,7 @@ type Item = {
     status: string;
     error: string | null;
     sent_at: string | null;
+    application_id: number | null;
 };
 
 type Batch = {
@@ -28,6 +29,7 @@ type Batch = {
     sent: number;
     failed: number;
     created_at: string;
+    sync_target_status: string | null;
     items: Item[];
 };
 
