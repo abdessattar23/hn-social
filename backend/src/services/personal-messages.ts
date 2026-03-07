@@ -489,7 +489,7 @@ async function dispatchItem(
                         identifier: item.recipient_identifier,
                     },
                 ],
-                subject: item.subject || "",
+                subject: item.subject || "(No Subject)",
                 body,
             });
         } else {
