@@ -189,6 +189,26 @@ export async function remove(id: number, orgId: number) {
     if (error) throw new BadRequestError(error.message);
     return { deleted: true };
 }
+
+export async function updateBatchSubject(id: number, subject: string, orgId: number) {
+    // Verify batch belongs to org
+    const { data: batch, error: findErr } = await db
+        .from("personal_messages")
+        .select("id")
+        .eq("id", id)
+        .eq("org_id", orgId)
+        .single();
+    if (findErr || !batch) throw new NotFoundError("Batch not found");
+
+    const { error, count } = await db
+        .from("personal_message_items")
+        .update({ subject })
+        .eq("personal_message_id", id);
+    if (error) throw new BadRequestError(error.message);
+
+    return { updated: count, subject };
+}
+
 // ── Application Email Sync ─────────────────────────────────────────────
 
 const ACCEPTANCE_TEMPLATE = (firstName: string) => ({

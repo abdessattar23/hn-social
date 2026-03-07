@@ -60,6 +60,15 @@ personalMessagesRouter.post("/sync-applications", async (c) => {
     const batch = await service.syncFromApplications(statusValue, statusField, accountId, user.orgId, user.id, eventId);
     return c.json(batch, 201);
 });
+// Update subject for all items in a batch
+personalMessagesRouter.patch("/:id/subject", async (c) => {
+    const user = resolveUserContext(c);
+    const id = extractNumericParam(c);
+    const { subject } = await c.req.json();
+    if (!subject || !subject.trim()) throw new BadRequestError("Subject is required");
+    const result = await service.updateBatchSubject(id, subject.trim(), user.orgId);
+    return c.json(result);
+});
 
 // Import CSV into a batch
 personalMessagesRouter.post("/:id/import-csv", async (c) => {

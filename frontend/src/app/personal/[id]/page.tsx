@@ -60,6 +60,9 @@ export default function PersonalDetailPage() {
     const [sending, setSending] = useState(false);
     const [dragOver, setDragOver] = useState(false);
 
+    // Subject for EMAIL batches
+    const [batchSubject, setBatchSubject] = useState('');
+
     const [dailySendLimit, setDailySendLimit] = useState<number>(100);
     const [delayMin, setDelayMin] = useState<number>(5);
     const [delayMax, setDelayMax] = useState<number>(15);
@@ -86,6 +89,9 @@ export default function PersonalDetailPage() {
             .get(`/personal-messages/${id}`)
             .then((d: Batch) => {
                 setBatch(d);
+                // Pre-populate subject from first item
+                const firstSubject = d.items?.find(i => i.subject)?.subject;
+                if (firstSubject && !batchSubject) setBatchSubject(firstSubject);
                 // Auto-poll while sending
                 if (d.status === 'SENDING' && !pollRef.current) {
                     pollRef.current = setInterval(() => {
@@ -300,6 +306,39 @@ export default function PersonalDetailPage() {
                             transition={{ duration: 0.4, ease: 'easeOut' }}
                         />
                     </div>
+                </div>
+            )}
+
+            {/* Subject Input for EMAIL */}
+            {batch.channel === 'EMAIL' && (
+                <div className="rounded-2xl bg-surface p-5 shadow-1 border border-stroke/60 mb-6">
+                    <label className="text-sm font-medium text-dark mb-2 block">Email Subject</label>
+                    <div className="flex gap-3">
+                        <input
+                            type="text"
+                            placeholder="Enter email subject line..."
+                            value={batchSubject}
+                            onChange={(e) => setBatchSubject(e.target.value)}
+                            className="flex-1 border border-stroke rounded-xl px-4 py-2.5 text-sm outline-none bg-surface-2 transition-all duration-200 focus:border-primary"
+                        />
+                        <motion.button
+                            whileHover={{ scale: 1.02 }}
+                            whileTap={{ scale: 0.98 }}
+                            onClick={async () => {
+                                if (!batchSubject.trim()) { setError('Subject cannot be empty'); return; }
+                                try {
+                                    await api.patch(`/personal-messages/${id}/subject`, { subject: batchSubject.trim() });
+                                    load();
+                                } catch (err: any) {
+                                    setError(err.message || 'Failed to update subject');
+                                }
+                            }}
+                            className="bg-primary hover:bg-accent text-white rounded-xl px-5 py-2.5 text-sm font-medium transition-colors whitespace-nowrap"
+                        >
+                            Apply to All
+                        </motion.button>
+                    </div>
+                    <p className="text-dark-5 text-xs mt-2">Sets this subject on all items in the batch.</p>
                 </div>
             )}
 
