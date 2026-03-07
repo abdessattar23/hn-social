@@ -20,9 +20,8 @@ personalMessagesRouter.get("/", async (c) => {
 });
 
 // List hackathon events for sync selector (MUST be before /:id)
-personalMessagesRouter.get("/hackathon-events", async (c) => {
-    const events = await service.listHackathonEvents();
-    return c.json(events);
+personalMessagesRouter.get("/hackathon-events", (c) => {
+    return c.json(service.listHackathonEvents());
 });
 
 // Get single batch with items

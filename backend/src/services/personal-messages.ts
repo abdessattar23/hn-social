@@ -209,13 +209,48 @@ export async function updateBatchSubject(id: number, subject: string, orgId: num
     return { updated: count, subject };
 }
 
+// ── Hackathon Events (date-based) ──────────────────────────────────────
+
+interface HackathonEvent {
+    id: number;
+    label: string;
+    startDate: string;   // ISO date, inclusive
+    endDate: string | null; // ISO date, inclusive — null means "ongoing / now"
+}
+
+const HACKATHON_EVENTS: readonly HackathonEvent[] = [
+    { id: 5, label: "Hack-Nation 5", startDate: "2026-02-10", endDate: null },
+];
+
+function resolveEvent(eventId: number): HackathonEvent | undefined {
+    return HACKATHON_EVENTS.find((e) => e.id === eventId);
+}
+
+// ── Pagination helpers (Supabase caps at 1 000 rows) ───────────────────
+
+const PAGE_SIZE = 1000;
+
+async function fetchAllRows<T>(baseQuery: any): Promise<T[]> {
+    const rows: T[] = [];
+    let from = 0;
+    while (true) {
+        const { data, error } = await baseQuery.range(from, from + PAGE_SIZE - 1);
+        if (error) throw new BadRequestError(error.message);
+        if (!data || data.length === 0) break;
+        rows.push(...data);
+        if (data.length < PAGE_SIZE) break;
+        from += PAGE_SIZE;
+    }
+    return rows;
+}
+
 // ── Application Email Sync ─────────────────────────────────────────────
 
-const ACCEPTANCE_TEMPLATE = (firstName: string) => ({
-    subject: "🎉 Congratulations — You're In! | Hack-Nation 5",
+const ACCEPTANCE_TEMPLATE = (firstName: string, eventName: string) => ({
+    subject: `🎉 Congratulations — You're In! | ${eventName}`,
     body: `Hi ${firstName},
 
-We're thrilled to inform you that your application to Hack-Nation 5 has been accepted! 🎉
+We're thrilled to inform you that your application to ${eventName} has been accepted! 🎉
 
 You've been selected from a competitive pool of applicants, and we can't wait to see what you'll build.
 
@@ -226,17 +261,17 @@ Here's what happens next:
 
 If you have any questions, don't hesitate to reach out.
 
-See you at Hack-Nation 5! 🚀
+See you at ${eventName}! 🚀
 
 Best regards,
 The Hack-Nation Team`,
 });
 
-const REJECTION_TEMPLATE = (firstName: string) => ({
-    subject: "Your Hack-Nation 5 Application Update",
+const REJECTION_TEMPLATE = (firstName: string, eventName: string) => ({
+    subject: `Your ${eventName} Application Update`,
     body: `Hi ${firstName},
 
-Thank you for your interest in Hack-Nation 5 and for taking the time to apply.
+Thank you for your interest in ${eventName} and for taking the time to apply.
 
 After careful review, we regret to inform you that we are unable to offer you a spot in this edition. This was an incredibly competitive cycle with a record number of applications.
 
@@ -248,17 +283,13 @@ Best regards,
 The Hack-Nation Team`,
 });
 
-export async function listHackathonEvents() {
-    // Get distinct event numbers from hackathon_applications
-    const { data, error } = await db
-        .from("hackathon_applications")
-        .select("event")
-        .not("event", "is", null)
-        .order("event", { ascending: false });
-    if (error) throw new BadRequestError(error.message);
-
-    const uniqueEvents = [...new Set((data || []).map((d: any) => d.event).filter(Boolean))];
-    return uniqueEvents.map((e: number) => ({ id: e, label: `Hack-Nation ${e}` }));
+export function listHackathonEvents() {
+    return HACKATHON_EVENTS.map((e) => ({
+        id: e.id,
+        label: e.label,
+        startDate: e.startDate,
+        endDate: e.endDate,
+    }));
 }
 
 export async function syncFromApplications(
@@ -278,27 +309,34 @@ export async function syncFromApplications(
         .maybeSingle();
     if (!account) throw new BadRequestError("Account not connected to your organization");
 
-    // Fetch applications
+    // Resolve event for date filtering and template naming
+    const event = eventId ? resolveEvent(eventId) : undefined;
+    if (eventId && !event) throw new BadRequestError(`Unknown event id: ${eventId}`);
+
+    // Fetch applications filtered by status + date range
     let query = db
         .from("hackathon_applications")
-        .select("id, first_name, last_name, email, event")
+        .select("id, first_name, last_name, email")
         .eq(statusField, statusValue);
 
-    if (eventId) {
-        query = query.eq("event", eventId);
+    if (event) {
+        query = query.gte("timestamp", `${event.startDate}T00:00:00.000Z`);
+        const upper = event.endDate ?? new Date().toISOString().split("T")[0];
+        query = query.lte("timestamp", `${upper}T23:59:59.999Z`);
     }
 
-    const { data: applications, error: fetchErr } = await query;
+    const applications = await fetchAllRows<any>(query);
 
-    if (fetchErr) throw new BadRequestError(fetchErr.message);
-    if (!applications || applications.length === 0) {
-        throw new BadRequestError(`No applications found with ${statusField} = '${statusValue}'${eventId ? ` and event = ${eventId}` : ''}`);
+    if (applications.length === 0) {
+        const range = event ? ` between ${event.startDate} and ${event.endDate ?? "now"}` : "";
+        throw new BadRequestError(`No applications found with ${statusField} = '${statusValue}'${range}`);
     }
 
+    const eventName = event?.label ?? "Hack-Nation";
     const isAccepted = statusValue === "pre_accepted" || statusValue === "accepted";
     const label = isAccepted ? "Accepted" : "Rejected";
-    const eventLabel = eventId ? `HN${eventId}` : "HN";
-    const batchName = `${eventLabel} ${label} — ${new Date().toLocaleDateString("en-GB")}`;
+    const shortLabel = event ? `HN${event.id}` : "HN";
+    const batchName = `${shortLabel} ${label} — ${new Date().toLocaleDateString("en-GB")}`;
 
     // Create batch
     const { data: batch, error: batchErr } = await db
@@ -314,11 +352,11 @@ export async function syncFromApplications(
         .single();
     if (batchErr) throw new BadRequestError(batchErr.message);
 
-    // Generate items
+    // Generate items with dynamic event name in templates
     const templateFn = isAccepted ? ACCEPTANCE_TEMPLATE : REJECTION_TEMPLATE;
     const items = applications.map((app: any) => {
         const firstName = app.first_name || "Applicant";
-        const tmpl = templateFn(firstName);
+        const tmpl = templateFn(firstName, eventName);
         return {
             personal_message_id: batch.id,
             recipient_name: `${app.first_name || ""} ${app.last_name || ""}`.trim() || app.email,
@@ -329,10 +367,13 @@ export async function syncFromApplications(
         };
     });
 
-    const { error: insertErr } = await db
-        .from("personal_message_items")
-        .insert(items);
-    if (insertErr) throw new BadRequestError(insertErr.message);
+    for (let i = 0; i < items.length; i += PAGE_SIZE) {
+        const chunk = items.slice(i, i + PAGE_SIZE);
+        const { error: insertErr } = await db
+            .from("personal_message_items")
+            .insert(chunk);
+        if (insertErr) throw new BadRequestError(insertErr.message);
+    }
 
     // Update total
     await db
@@ -343,6 +384,7 @@ export async function syncFromApplications(
     telemetry.record("personal-batch.synced", batch.id, {
         statusField,
         statusValue,
+        eventId: event?.id,
         count: items.length,
     });
 

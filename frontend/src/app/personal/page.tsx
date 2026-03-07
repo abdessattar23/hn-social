@@ -66,7 +66,7 @@ export default function PersonalPage() {
     const [syncAccountId, setSyncAccountId] = useState('');
     const [syncEventId, setSyncEventId] = useState('');
     const [syncing, setSyncing] = useState(false);
-    const [hackathonEvents, setHackathonEvents] = useState<{ id: number; label: string }[]>([]);
+    const [hackathonEvents, setHackathonEvents] = useState<{ id: number; label: string; startDate: string; endDate: string | null }[]>([]);
     const router = useRouter();
 
     useEffect(() => {
@@ -271,7 +271,9 @@ export default function PersonalPage() {
                         >
                             <option value="">All Events</option>
                             {hackathonEvents.map((ev) => (
-                                <option key={ev.id} value={ev.id}>{ev.label}</option>
+                                <option key={ev.id} value={ev.id}>
+                                    {ev.label} ({new Date(ev.startDate).toLocaleDateString('en-GB')} – {ev.endDate ? new Date(ev.endDate).toLocaleDateString('en-GB') : 'now'})
+                                </option>
                             ))}
                         </select>
                         <select
