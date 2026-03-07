@@ -219,7 +219,7 @@ interface HackathonEvent {
 }
 
 const HACKATHON_EVENTS: readonly HackathonEvent[] = [
-    { id: 5, label: "Hack-Nation 5", startDate: "2026-02-10", endDate: null },
+    { id: 5, label: "Hack-Nation 5", startDate: "2026-02-08", endDate: null },
 ];
 
 function resolveEvent(eventId: number): HackathonEvent | undefined {

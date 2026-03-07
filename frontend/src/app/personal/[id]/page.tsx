@@ -150,7 +150,7 @@ export default function PersonalDetailPage() {
 
     const handleSaveLimit = async () => {
         try {
-            await api.patch('/org/send-limit', { limit: dailySendLimit });
+            await api.patch('/org/send-limit', { dailySendLimit: dailySendLimit });
             setIsEditingLimit(false);
         } catch (err: any) {
             setError(err.message || 'Failed to update limit');
