@@ -52,6 +52,26 @@ const channelBadge = (ch: string) => {
     return 'bg-linkedin-light text-linkedin';
 };
 
+function MessageCell({ text }: { text: string }) {
+    const [expanded, setExpanded] = useState(false);
+    const isLong = text.length > 120;
+    return (
+        <div className="max-w-[350px]">
+            <div className={expanded ? 'whitespace-pre-line text-xs leading-relaxed' : 'line-clamp-2 text-xs'}>
+                {text}
+            </div>
+            {isLong && (
+                <button
+                    onClick={() => setExpanded(!expanded)}
+                    className="text-primary hover:text-accent text-[11px] font-medium mt-1 transition-colors"
+                >
+                    {expanded ? '▲ Show less' : '▼ Show more'}
+                </button>
+            )}
+        </div>
+    );
+}
+
 export default function PersonalDetailPage() {
     const { authed } = useRequireAuth();
     const params = useParams();
@@ -610,10 +630,10 @@ export default function PersonalDetailPage() {
                                             <td className="px-5 py-3 font-medium text-dark">{item.recipient_name}</td>
                                             <td className="px-5 py-3 text-dark-5 font-mono text-xs">{item.recipient_identifier}</td>
                                             {batch.channel === 'EMAIL' && (
-                                                <td className="px-5 py-3 text-dark-5 max-w-[200px] truncate">{item.subject || '—'}</td>
+                                                <td className="px-5 py-3 text-dark-5">{item.subject || '—'}</td>
                                             )}
-                                            <td className="px-5 py-3 text-dark-5 max-w-[300px]">
-                                                <span className="line-clamp-2">{item.message_body}</span>
+                                            <td className="px-5 py-3 text-dark-5">
+                                                <MessageCell text={item.message_body} />
                                             </td>
                                             <td className="px-5 py-3">
                                                 <span className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-md text-xs font-medium ${isc.bg} ${isc.text}`}>
@@ -621,7 +641,7 @@ export default function PersonalDetailPage() {
                                                     {item.status}
                                                 </span>
                                                 {item.error && (
-                                                    <p className="text-xs text-red mt-1 max-w-[200px] truncate" title={item.error}>
+                                                    <p className="text-xs text-red mt-1" title={item.error}>
                                                         {item.error}
                                                     </p>
                                                 )}

@@ -24,6 +24,11 @@ personalMessagesRouter.get("/hackathon-events", (c) => {
     return c.json(service.listHackathonEvents());
 });
 
+// List admission batches for batch selector (MUST be before /:id)
+personalMessagesRouter.get("/admission-batches", (c) => {
+    return c.json(service.listAdmissionBatches());
+});
+
 // Get single batch with items
 personalMessagesRouter.get("/:id", async (c) => {
     const user = resolveUserContext(c);
@@ -52,11 +57,12 @@ personalMessagesRouter.post("/sync-applications", async (c) => {
     const statusField: "pre_status" | "status" = body.statusField || "pre_status";
     const accountId = body.accountId;
     const eventId = body.eventId ? Number(body.eventId) : undefined;
+    const batchNumbers: number[] = Array.isArray(body.batchNumbers) ? body.batchNumbers.map(Number) : [];
     if (!statusValue) {
         throw new BadRequestError("statusValue is required");
     }
     if (!accountId) throw new BadRequestError("accountId is required");
-    const batch = await service.syncFromApplications(statusValue, statusField, accountId, user.orgId, user.id, eventId);
+    const batch = await service.syncFromApplications(statusValue, statusField, accountId, user.orgId, user.id, eventId, batchNumbers.length > 0 ? batchNumbers : undefined);
     return c.json(batch, 201);
 });
 

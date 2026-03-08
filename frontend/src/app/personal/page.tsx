@@ -65,8 +65,11 @@ export default function PersonalPage() {
     const [syncStatus, setSyncStatus] = useState('pre_accepted:pre_status');
     const [syncAccountId, setSyncAccountId] = useState('');
     const [syncEventId, setSyncEventId] = useState('');
+    const [syncBatchNumbers, setSyncBatchNumbers] = useState<number[]>([]);
     const [syncing, setSyncing] = useState(false);
     const [hackathonEvents, setHackathonEvents] = useState<{ id: number; label: string; startDate: string; endDate: string | null }[]>([]);
+    const [admissionBatches, setAdmissionBatches] = useState<{ number: number; label: string; applicationStart: string; commsDeadline: string }[]>([]);
+    const [showBatchDropdown, setShowBatchDropdown] = useState(false);
     const router = useRouter();
 
     useEffect(() => {
@@ -75,6 +78,9 @@ export default function PersonalPage() {
         loadAccounts();
         api.get('/personal-messages/hackathon-events')
             .then((d: any) => setHackathonEvents(d || []))
+            .catch(() => { });
+        api.get('/personal-messages/admission-batches')
+            .then((d: any) => setAdmissionBatches(d || []))
             .catch(() => { });
     }, [authed]);
 
@@ -153,6 +159,7 @@ export default function PersonalPage() {
                 statusField,
                 accountId: syncAccountId,
                 eventId: syncEventId || undefined,
+                batchNumbers: syncBatchNumbers.length > 0 ? syncBatchNumbers : undefined,
             });
             setShowSync(false);
             load();
@@ -263,7 +270,7 @@ export default function PersonalPage() {
                         </div>
                         Sync from Hackathon Applications
                     </h3>
-                    <div className="grid grid-cols-3 gap-4 mb-4">
+                    <div className={`grid grid-cols-1 md:grid-cols-2 gap-4 mb-4 ${showBatchDropdown ? 'pb-52' : ''}`}>
                         <select
                             value={syncEventId}
                             onChange={(e) => setSyncEventId(e.target.value)}
@@ -291,6 +298,65 @@ export default function PersonalPage() {
                                 <option value="pending:status">⏳ Pending</option>
                             </optgroup>
                         </select>
+                        {/* Batch multi-select dropdown */}
+                        <div className="relative">
+                            <button
+                                type="button"
+                                onClick={() => setShowBatchDropdown(!showBatchDropdown)}
+                                className="w-full border border-stroke rounded-xl px-5 py-3 text-sm outline-none bg-surface-2 transition-all focus:border-primary text-left flex items-center justify-between"
+                            >
+                                <span className={syncBatchNumbers.length === 0 ? 'text-dark-5' : 'text-dark'}>
+                                    {syncBatchNumbers.length === 0
+                                        ? 'All Batches'
+                                        : syncBatchNumbers.length === admissionBatches.length
+                                            ? 'All Batches'
+                                            : `Batch ${syncBatchNumbers.sort((a, b) => a - b).join(', ')}`}
+                                </span>
+                                <svg className={`w-4 h-4 text-dark-5 transition-transform ${showBatchDropdown ? 'rotate-180' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                                    <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+                                </svg>
+                            </button>
+                            {showBatchDropdown && (
+                                <div className="absolute z-50 top-full left-0 right-0 mt-1 bg-surface border border-stroke rounded-xl shadow-lg py-1 max-h-60 overflow-y-auto">
+                                    <button
+                                        type="button"
+                                        onClick={() => setSyncBatchNumbers([])}
+                                        className={`w-full text-left px-4 py-2 text-sm hover:bg-surface-2 transition-colors flex items-center gap-2 ${syncBatchNumbers.length === 0 ? 'text-primary font-medium' : 'text-dark'}`}
+                                    >
+                                        <span className={`w-4 h-4 rounded border flex items-center justify-center text-xs ${syncBatchNumbers.length === 0 ? 'bg-primary border-primary text-white' : 'border-stroke'}`}>
+                                            {syncBatchNumbers.length === 0 && '✓'}
+                                        </span>
+                                        All Batches
+                                    </button>
+                                    <div className="h-px bg-stroke/40 mx-3 my-1" />
+                                    {admissionBatches.map((ab) => {
+                                        const isSelected = syncBatchNumbers.includes(ab.number);
+                                        return (
+                                            <button
+                                                key={ab.number}
+                                                type="button"
+                                                onClick={() => {
+                                                    setSyncBatchNumbers((prev) =>
+                                                        isSelected
+                                                            ? prev.filter((n) => n !== ab.number)
+                                                            : [...prev, ab.number]
+                                                    );
+                                                }}
+                                                className={`w-full text-left px-4 py-2 text-sm hover:bg-surface-2 transition-colors flex items-center gap-2 ${isSelected ? 'text-primary font-medium' : 'text-dark'}`}
+                                            >
+                                                <span className={`w-4 h-4 rounded border flex items-center justify-center text-xs ${isSelected ? 'bg-primary border-primary text-white' : 'border-stroke'}`}>
+                                                    {isSelected && '✓'}
+                                                </span>
+                                                {ab.label}
+                                                <span className="text-dark-5 text-xs ml-auto">
+                                                    {new Date(ab.applicationStart).toLocaleDateString('en-GB', { day: '2-digit', month: 'short' })} – {new Date(ab.commsDeadline).toLocaleDateString('en-GB', { day: '2-digit', month: 'short' })}
+                                                </span>
+                                            </button>
+                                        );
+                                    })}
+                                </div>
+                            )}
+                        </div>
                         <select
                             value={syncAccountId}
                             onChange={(e) => setSyncAccountId(e.target.value)}
@@ -338,7 +404,7 @@ export default function PersonalPage() {
                     <p className="text-dark-5 text-sm">Create a batch and upload a CSV with personalized messages for each recipient.</p>
                 </motion.div>
             ) : (
-                <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+                <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-5">
                     {batches.map((b, i) => {
                         const sc = statusConfig[b.status] || statusConfig.DRAFT;
                         const progress = b.total > 0 ? Math.round(((b.sent + b.failed) / b.total) * 100) : 0;
@@ -349,7 +415,7 @@ export default function PersonalPage() {
                                 animate={{ opacity: 1, y: 0 }}
                                 transition={{ duration: 0.3, delay: i * 0.05 }}
                             >
-                                <AnimatedCard className="rounded-2xl bg-surface p-5 shadow-1 border border-stroke/60 hover:border-stroke/50">
+                                <AnimatedCard className="rounded-2xl bg-surface p-6 shadow-1 border border-stroke/60 hover:border-stroke/50">
                                     <div className="flex items-start justify-between mb-3">
                                         <div className="flex-1 min-w-0">
                                             <Link

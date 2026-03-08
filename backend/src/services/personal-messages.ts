@@ -228,6 +228,33 @@ function resolveEvent(eventId: number): HackathonEvent | undefined {
     return HACKATHON_EVENTS.find((e) => e.id === eventId);
 }
 
+// ── Admission Batches (date-range cohorts from comms plan) ─────────────
+
+interface AdmissionBatch {
+    number: number;
+    label: string;
+    applicationStart: string;  // ISO date, inclusive
+    commsDeadline: string;     // ISO date, inclusive
+}
+
+const ADMISSION_BATCHES: readonly AdmissionBatch[] = [
+    { number: 1, label: "Batch 1", applicationStart: "2026-02-20", commsDeadline: "2026-02-27" },
+    { number: 2, label: "Batch 2", applicationStart: "2026-03-06", commsDeadline: "2026-03-15" },
+    { number: 3, label: "Batch 3", applicationStart: "2026-03-15", commsDeadline: "2026-03-25" },
+    { number: 4, label: "Batch 4", applicationStart: "2026-03-25", commsDeadline: "2026-04-04" },
+    { number: 5, label: "Batch 5", applicationStart: "2026-04-01", commsDeadline: "2026-04-18" },
+    { number: 6, label: "Batch 6", applicationStart: "2026-04-17", commsDeadline: "2026-04-19" },
+];
+
+export function listAdmissionBatches() {
+    return ADMISSION_BATCHES.map((b) => ({
+        number: b.number,
+        label: b.label,
+        applicationStart: b.applicationStart,
+        commsDeadline: b.commsDeadline,
+    }));
+}
+
 // ── Pagination helpers (Supabase caps at 1 000 rows) ───────────────────
 
 const PAGE_SIZE = 1000;
@@ -301,8 +328,9 @@ export async function syncFromApplications(
     orgId: number,
     userId: string,
     eventId?: number,
+    batchNumbers?: number[],
 ) {
-    console.log(`[SyncApplications] Starting sync | statusField=${statusField} statusValue=${statusValue} accountId=${accountId} orgId=${orgId} eventId=${eventId}`);
+    console.log(`[SyncApplications] Starting sync | statusField=${statusField} statusValue=${statusValue} accountId=${accountId} orgId=${orgId} eventId=${eventId} batchNumbers=${JSON.stringify(batchNumbers)}`);
 
     // Verify account
     const { data: account } = await db
@@ -317,19 +345,48 @@ export async function syncFromApplications(
     const event = eventId ? resolveEvent(eventId) : undefined;
     if (eventId && !event) throw new BadRequestError(`Unknown event id: ${eventId}`);
 
+    // Resolve selected admission batches
+    const selectedBatches = batchNumbers && batchNumbers.length > 0
+        ? ADMISSION_BATCHES.filter((b) => batchNumbers.includes(b.number))
+        : [];
+
     // Fetch applications filtered by status + date range
-    let query = db
-        .from("hackathon_applications")
-        .select("id, first_name, last_name, email")
-        .eq(statusField, statusValue);
+    // When batches are selected, we fetch per-batch and merge (OR across batch ranges)
+    let applications: any[];
+    if (selectedBatches.length > 0) {
+        // Fetch for each batch range and merge unique by id
+        const seen = new Set<string>();
+        applications = [];
+        for (const batch of selectedBatches) {
+            let q = db
+                .from("hackathon_applications")
+                .select("id, first_name, last_name, email")
+                .eq(statusField, statusValue)
+                .gte("timestamp", `${batch.applicationStart}T00:00:00.000Z`)
+                .lte("timestamp", `${batch.commsDeadline}T23:59:59.999Z`);
+            const rows = await fetchAllRows<any>(q);
+            for (const row of rows) {
+                if (!seen.has(row.id)) {
+                    seen.add(row.id);
+                    applications.push(row);
+                }
+            }
+        }
+    } else {
+        // No batch filter — use event date range (original behavior)
+        let query = db
+            .from("hackathon_applications")
+            .select("id, first_name, last_name, email")
+            .eq(statusField, statusValue);
 
-    if (event) {
-        query = query.gte("timestamp", `${event.startDate}T00:00:00.000Z`);
-        const upper = event.endDate ?? new Date().toISOString().split("T")[0];
-        query = query.lte("timestamp", `${upper}T23:59:59.999Z`);
+        if (event) {
+            query = query.gte("timestamp", `${event.startDate}T00:00:00.000Z`);
+            const upper = event.endDate ?? new Date().toISOString().split("T")[0];
+            query = query.lte("timestamp", `${upper}T23:59:59.999Z`);
+        }
+
+        applications = await fetchAllRows<any>(query);
     }
-
-    const applications = await fetchAllRows<any>(query);
     console.log(`[SyncApplications] Fetched ${applications.length} applications`);
     if (applications.length > 0) {
         console.log(`[SyncApplications] Sample app:`, JSON.stringify(applications[0]));
@@ -344,7 +401,10 @@ export async function syncFromApplications(
     const isAccepted = statusValue === "pre_accepted" || statusValue === "accepted";
     const label = isAccepted ? "Accepted" : "Rejected";
     const shortLabel = event ? `HN${event.id}` : "HN";
-    const batchName = `${shortLabel} ${label} — ${new Date().toLocaleDateString("en-GB")}`;
+    const batchSuffix = selectedBatches.length > 0
+        ? ` B${selectedBatches.map((b) => b.number).join("+")}`
+        : "";
+    const batchName = `${shortLabel} ${label}${batchSuffix} — ${new Date().toLocaleDateString("en-GB")}`;
 
     // Derive the target status to apply on hackathon_applications after send
     const syncTargetStatus = isAccepted ? "accepted" : "rejected";

@@ -20,6 +20,7 @@ import linkedinRoutes from "./routes/linkedin";
 import batchesRoutes from "./routes/batches";
 import emailRoutes from "./routes/email";
 import personalMessagesRoutes from "./routes/personal-messages";
+import commsPlanRoutes from "./routes/comms-plan";
 
 interface RouteManifestEntry {
   readonly basePath: string;
@@ -112,6 +113,12 @@ const ROUTE_MANIFEST: ReadonlyArray<RouteManifestEntry> = [
     basePath: "/api/personal-messages",
     handler: personalMessagesRoutes,
     description: "Personal message batch orchestration via CSV",
+    authRequired: true,
+  },
+  {
+    basePath: "/api/comms-plan",
+    handler: commsPlanRoutes,
+    description: "Communication plan journey tracker",
     authRequired: true,
   },
 ] as const;

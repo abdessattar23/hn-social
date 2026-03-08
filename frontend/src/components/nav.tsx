@@ -11,6 +11,7 @@ const links = [
   { href: '/messages', label: 'Templates' },
   { href: '/campaigns', label: 'Campaigns' },
   { href: '/personal', label: 'Personal' },
+  { href: '/comms-plan', label: 'Comms Plan' },
   { href: '/email', label: 'Email' },
   { href: '/linkedin', label: 'LinkedIn' },
   { href: '/settings', label: 'Settings' },
