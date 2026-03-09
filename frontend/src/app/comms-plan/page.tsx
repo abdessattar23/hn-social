@@ -29,14 +29,28 @@ interface CommsPlanRow {
     batches: Record<number, StepStatus>;
 }
 
-const BATCH_LABELS = [
-    { number: 1, label: 'B1', dates: 'Feb 20 – Feb 27' },
-    { number: 2, label: 'B2', dates: 'Mar 6 – Mar 15' },
-    { number: 3, label: 'B3', dates: 'Mar 15 – Mar 25' },
-    { number: 4, label: 'B4', dates: 'Mar 25 – Apr 4' },
-    { number: 5, label: 'B5', dates: 'Apr 1 – Apr 18' },
-    { number: 6, label: 'B6', dates: 'Apr 17 – Apr 19' },
-];
+interface AdmissionBatch {
+    number: number;
+    label: string;
+    applicationStart: string;
+    commsDeadline: string;
+}
+
+interface BatchLabel {
+    number: number;
+    label: string;
+    dates: string;
+}
+
+function formatBatchLabel(b: AdmissionBatch): BatchLabel {
+    const fmt = (iso: string) =>
+        new Date(iso + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+    return {
+        number: b.number,
+        label: `B${b.number}`,
+        dates: `${fmt(b.applicationStart)} \u2013 ${fmt(b.commsDeadline)}`,
+    };
+}
 
 const statusStyles: Record<string, { bg: string; text: string; icon: string; label: string }> = {
     pending: { bg: 'bg-surface-2', text: 'text-dark-5', icon: '○', label: 'Pending' },
@@ -58,14 +72,22 @@ const templateBadge = (type: string) => {
 export default function CommsPlanPage() {
     const { authed } = useRequireAuth();
     const [plan, setPlan] = useState<CommsPlanRow[]>([]);
+    const [batchLabels, setBatchLabels] = useState<BatchLabel[]>([]);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState('');
     const [toggling, setToggling] = useState<string | null>(null);
 
     const load = useCallback(() => {
-        api.get('/comms-plan')
-            .then((d: any) => { setPlan(d || []); setLoading(false); })
-            .catch((err: any) => { setError(err.message || 'Failed to load'); setLoading(false); });
+        Promise.all([
+            api.get('/comms-plan') as Promise<CommsPlanRow[]>,
+            api.get('/personal-messages/admission-batches') as Promise<AdmissionBatch[]>,
+        ])
+            .then(([planData, batches]) => {
+                setPlan(planData || []);
+                setBatchLabels((batches || []).map(formatBatchLabel));
+                setLoading(false);
+            })
+            .catch((err: Error) => { setError(err.message || 'Failed to load'); setLoading(false); });
     }, []);
 
     useEffect(() => {
@@ -96,15 +118,16 @@ export default function CommsPlanPage() {
                     };
                 }),
             );
-        } catch (err: any) {
-            setError(err.message || 'Failed to update');
+        } catch (err: unknown) {
+            setError(err instanceof Error ? err.message : 'Failed to update');
         } finally {
             setToggling(null);
         }
     };
 
     // Compute progress stats
-    const totalCells = plan.length * 6;
+    const batchCount = batchLabels.length || 6;
+    const totalCells = plan.length * batchCount;
     const doneCells = plan.reduce((acc, row) => {
         return acc + Object.values(row.batches).filter((b) => b.status === 'done').length;
     }, 0);
@@ -201,7 +224,7 @@ export default function CommsPlanPage() {
                                     <th className="text-left px-4 py-3 text-dark-5 font-medium text-xs uppercase tracking-wider min-w-[200px] hidden lg:table-cell">Content</th>
                                     <th className="text-left px-4 py-3 text-dark-5 font-medium text-xs uppercase tracking-wider w-20">Type</th>
                                     <th className="text-left px-4 py-3 text-dark-5 font-medium text-xs uppercase tracking-wider min-w-[120px] hidden xl:table-cell">Who</th>
-                                    {BATCH_LABELS.map((b) => (
+                                    {batchLabels.map((b) => (
                                         <th key={b.number} className="text-center px-2 py-3 text-dark-5 font-medium text-xs uppercase tracking-wider w-16">
                                             <div>{b.label}</div>
                                             <div className="text-[10px] font-normal normal-case text-dark-6 mt-0.5">{b.dates.split('–')[0].trim()}</div>
@@ -212,7 +235,7 @@ export default function CommsPlanPage() {
                             <tbody>
                                 {plan.map((row, i) => {
                                     const rowDone = Object.values(row.batches).filter((b) => b.status === 'done' || b.status === 'skipped').length;
-                                    const isRowComplete = rowDone === 6;
+                                    const isRowComplete = rowDone === batchCount;
                                     return (
                                         <tr
                                             key={row.step.key}
@@ -231,7 +254,7 @@ export default function CommsPlanPage() {
                                                 </span>
                                             </td>
                                             <td className="px-4 py-3 text-dark-5 text-xs hidden xl:table-cell">{row.step.who}</td>
-                                            {BATCH_LABELS.map((b) => {
+                                            {batchLabels.map((b) => {
                                                 const cell = row.batches[b.number];
                                                 const st = statusStyles[cell.status] || statusStyles.pending;
                                                 const isToggling = toggling === `${row.step.key}:${b.number}`;
@@ -264,7 +287,7 @@ export default function CommsPlanPage() {
                 {plan.map((row) => {
                     const doneBatches = Object.values(row.batches).filter((b) => b.status === 'done').length;
                     const skippedBatches = Object.values(row.batches).filter((b) => b.status === 'skipped').length;
-                    const stepProgress = Math.round(((doneBatches + skippedBatches) / 6) * 100);
+                    const stepProgress = Math.round(((doneBatches + skippedBatches) / batchCount) * 100);
                     return (
                         <motion.div
                             key={row.step.key}
@@ -286,7 +309,7 @@ export default function CommsPlanPage() {
                                 />
                             </div>
                             <div className="flex gap-1 mt-2">
-                                {BATCH_LABELS.map((b) => {
+                                {batchLabels.map((b) => {
                                     const cell = row.batches[b.number];
                                     const color = cell.status === 'done' ? 'bg-green' : cell.status === 'skipped' ? 'bg-dark-5' : 'bg-surface-2';
                                     return <div key={b.number} className={`flex-1 h-1 rounded-full ${color}`} />;

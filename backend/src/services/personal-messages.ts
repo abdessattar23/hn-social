@@ -351,20 +351,24 @@ export async function syncFromApplications(
         : [];
 
     // Fetch applications filtered by status + date range
-    // When batches are selected, we fetch per-batch and merge (OR across batch ranges)
-    let applications: any[];
+    interface ApplicationRow { id: string; first_name: string; last_name: string; email: string }
+
+    let applications: ApplicationRow[];
     if (selectedBatches.length > 0) {
-        // Fetch for each batch range and merge unique by id
+        const batchResults = await Promise.all(
+            selectedBatches.map((batch) => {
+                const q = db
+                    .from("hackathon_applications")
+                    .select("id, first_name, last_name, email")
+                    .eq(statusField, statusValue)
+                    .gte("timestamp", `${batch.applicationStart}T00:00:00.000Z`)
+                    .lte("timestamp", `${batch.commsDeadline}T23:59:59.999Z`);
+                return fetchAllRows<ApplicationRow>(q);
+            }),
+        );
         const seen = new Set<string>();
         applications = [];
-        for (const batch of selectedBatches) {
-            let q = db
-                .from("hackathon_applications")
-                .select("id, first_name, last_name, email")
-                .eq(statusField, statusValue)
-                .gte("timestamp", `${batch.applicationStart}T00:00:00.000Z`)
-                .lte("timestamp", `${batch.commsDeadline}T23:59:59.999Z`);
-            const rows = await fetchAllRows<any>(q);
+        for (const rows of batchResults) {
             for (const row of rows) {
                 if (!seen.has(row.id)) {
                     seen.add(row.id);
@@ -385,7 +389,7 @@ export async function syncFromApplications(
             query = query.lte("timestamp", `${upper}T23:59:59.999Z`);
         }
 
-        applications = await fetchAllRows<any>(query);
+        applications = await fetchAllRows<ApplicationRow>(query);
     }
     console.log(`[SyncApplications] Fetched ${applications.length} applications`);
     if (applications.length > 0) {
@@ -431,7 +435,7 @@ export async function syncFromApplications(
 
     // Generate items with dynamic event name in templates
     const templateFn = isAccepted ? ACCEPTANCE_TEMPLATE : REJECTION_TEMPLATE;
-    const items = applications.map((app: any) => {
+    const items = applications.map((app) => {
         const firstName = app.first_name || "Applicant";
         const tmpl = templateFn(firstName, eventName);
         return {

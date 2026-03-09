@@ -3,6 +3,7 @@ import { zValidator } from "@hono/zod-validator";
 import { authMiddleware } from "../middleware/auth";
 import { createCampaignSchema, updateTagsSchema } from "../lib/validation";
 import * as orchestrator from "../services/campaigns";
+import { resolveUserContext, extractNumericParam } from "../lib/route-helpers";
 
 type CampaignIntent =
   | "list"
@@ -14,10 +15,6 @@ type CampaignIntent =
   | "cancel"
   | "send"
   | "remove";
-
-const resolveUserContext = (c: any) => c.get("user");
-const extractNumericParam = (c: any, key = "id") =>
-  Number(c.req.param(key));
 
 const campaignsRouter = new Hono();
 campaignsRouter.use("*", authMiddleware);

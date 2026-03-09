@@ -14,7 +14,7 @@ type EmailIntent =
   | "update"
   | "remove";
 
-const resolveUserContext = (c: any) => c.get("user");
+import { resolveUserContext } from "../lib/route-helpers";
 
 const requireAccountId = (c: any): string => {
   const accountId = c.req.query("accountId");

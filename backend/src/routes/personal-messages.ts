@@ -4,10 +4,7 @@ import { authMiddleware } from "../middleware/auth";
 import { createPersonalMessageSchema } from "../lib/validation";
 import * as service from "../services/personal-messages";
 import { BadRequestError } from "../lib/errors";
-
-const resolveUserContext = (c: any) => c.get("user");
-const extractNumericParam = (c: any, key = "id") =>
-    Number(c.req.param(key));
+import { resolveUserContext, extractNumericParam } from "../lib/route-helpers";
 
 const personalMessagesRouter = new Hono();
 personalMessagesRouter.use("*", authMiddleware);

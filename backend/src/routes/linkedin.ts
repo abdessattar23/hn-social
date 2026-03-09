@@ -23,7 +23,7 @@ type NetworkIntent =
   | "post"
   | "listPosts";
 
-const resolveUserContext = (c: any) => c.get("user");
+import { resolveUserContext } from "../lib/route-helpers";
 
 const constructCsvResponseHeaders = (c: any, filenamePrefix: string) => {
   c.header("Content-Type", "text/csv; charset=utf-8");

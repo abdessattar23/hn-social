@@ -29,9 +29,7 @@ const IDENTIFIER_COLUMN_PRIORITY = [
   "post_url",
 ];
 
-const resolveUserContext = (c: any) => c.get("user");
-const extractNumericParam = (c: any, key = "id") =>
-  Number(c.req.param(key));
+import { resolveUserContext, extractNumericParam } from "../lib/route-helpers";
 
 function detectIdentifierColumn(
   headers: string[],

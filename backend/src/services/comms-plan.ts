@@ -47,9 +47,18 @@ export interface CommsPlanRow {
     batches: Record<number, StepStatus>;
 }
 
+interface CommsStepRow {
+    org_id: number;
+    step_key: string;
+    batch_number: number;
+    status: "pending" | "done" | "skipped";
+    completed_at: string | null;
+    completed_by: string | null;
+    notes: string | null;
+}
+
 // ── Auto-Detection ─────────────────────────────────────────────────────
 
-// Maps personal_messages batch name patterns to step keys
 const STEP_DETECTION_PATTERNS: Record<string, RegExp> = {
     accepted: /accepted/i,
     rejected: /rejected/i,
@@ -68,14 +77,13 @@ async function getAutoDetectedSteps(orgId: number): Promise<Map<string, Set<numb
         if (!batches) return detected;
 
         for (const batch of batches) {
-            const name = batch.name || "";
-            // Try to match step key from batch name
+            const name = (batch.name as string) || "";
             for (const [stepKey, pattern] of Object.entries(STEP_DETECTION_PATTERNS)) {
                 if (pattern.test(name)) {
-                    // Extract batch numbers from name like "HN5 Accepted B1+B2"
-                    const batchMatch = name.match(/B(\d[\d+]*)/i);
-                    if (batchMatch) {
-                        const nums = batchMatch[1].split("+").map(Number).filter((n: number) => n >= 1 && n <= 6);
+                    const nums = [...name.matchAll(/B(\d+)/gi)]
+                        .map((m) => Number(m[1]))
+                        .filter((n) => n >= 1 && n <= 6);
+                    if (nums.length > 0) {
                         if (!detected.has(stepKey)) detected.set(stepKey, new Set());
                         for (const n of nums) detected.get(stepKey)!.add(n);
                     }
@@ -92,23 +100,19 @@ async function getAutoDetectedSteps(orgId: number): Promise<Map<string, Set<numb
 // ── Service Functions ──────────────────────────────────────────────────
 
 export async function getFullPlan(orgId: number): Promise<CommsPlanRow[]> {
-    // Fetch manual statuses from DB
-    const { data: rows, error } = await db
-        .from("comms_plan_steps")
-        .select("*")
-        .eq("org_id", orgId);
-    if (error) throw new BadRequestError(error.message);
+    const [manualResult, autoDetected] = await Promise.all([
+        db.from("comms_plan_steps").select("*").eq("org_id", orgId),
+        getAutoDetectedSteps(orgId),
+    ]);
 
-    // Fetch auto-detected steps
-    const autoDetected = await getAutoDetectedSteps(orgId);
+    if (manualResult.error) throw new BadRequestError(manualResult.error.message);
+    const rows = (manualResult.data || []) as CommsStepRow[];
 
-    // Build lookup: stepKey:batchNumber -> status
-    const statusMap = new Map<string, any>();
-    for (const row of rows || []) {
+    const statusMap = new Map<string, CommsStepRow>();
+    for (const row of rows) {
         statusMap.set(`${row.step_key}:${row.batch_number}`, row);
     }
 
-    // Build full plan
     return JOURNEY_STEPS.map((step) => {
         const batches: Record<number, StepStatus> = {};
         for (let b = 1; b <= 6; b++) {
@@ -137,7 +141,6 @@ export async function toggleStep(
     status: "pending" | "done" | "skipped",
     userId?: string,
 ) {
-    // Validate step key
     if (!JOURNEY_STEPS.find((s) => s.key === stepKey)) {
         throw new BadRequestError(`Unknown step key: ${stepKey}`);
     }
@@ -146,17 +149,16 @@ export async function toggleStep(
     }
 
     if (status === "pending") {
-        // Delete the row to reset to default
-        await db
+        const { error } = await db
             .from("comms_plan_steps")
             .delete()
             .eq("org_id", orgId)
             .eq("step_key", stepKey)
             .eq("batch_number", batchNumber);
+        if (error) throw new BadRequestError(error.message);
         return { step_key: stepKey, batch_number: batchNumber, status: "pending" };
     }
 
-    // Upsert
     const { data, error } = await db
         .from("comms_plan_steps")
         .upsert(

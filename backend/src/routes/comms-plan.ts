@@ -1,37 +1,46 @@
 import { Hono } from "hono";
 import { authMiddleware } from "../middleware/auth";
+import { BadRequestError } from "../lib/errors";
+import { resolveUserContext } from "../lib/route-helpers";
 import * as commsPlan from "../services/comms-plan";
 
-const resolveUserContext = (c: any) => c.get("user");
+const VALID_STATUSES = ["pending", "done", "skipped"] as const;
+type StepStatusValue = (typeof VALID_STATUSES)[number];
 
 const commsPlanRouter = new Hono();
 commsPlanRouter.use("*", authMiddleware);
 
-// Get full comms plan with statuses
 commsPlanRouter.get("/", async (c) => {
     const user = resolveUserContext(c);
     const plan = await commsPlan.getFullPlan(user.orgId);
     return c.json(plan);
 });
 
-// Get journey steps config
 commsPlanRouter.get("/steps", (c) => {
     return c.json(commsPlan.listJourneySteps());
 });
 
-// Toggle a step status
 commsPlanRouter.patch("/:stepKey/:batchNumber", async (c) => {
     const user = resolveUserContext(c);
     const stepKey = c.req.param("stepKey");
     const batchNumber = Number(c.req.param("batchNumber"));
-    const body = await c.req.json().catch(() => ({}));
-    const status = body.status || "done";
+
+    if (isNaN(batchNumber) || !Number.isInteger(batchNumber)) {
+        throw new BadRequestError("Batch number must be a valid integer");
+    }
+
+    const body = await c.req.json<{ status?: string }>().catch(() => ({}));
+    const status = (body.status ?? "done") as string;
+
+    if (!VALID_STATUSES.includes(status as StepStatusValue)) {
+        throw new BadRequestError(`Invalid status '${status}'. Must be one of: ${VALID_STATUSES.join(", ")}`);
+    }
 
     const result = await commsPlan.toggleStep(
         user.orgId,
         stepKey,
         batchNumber,
-        status,
+        status as StepStatusValue,
         user.id,
     );
     return c.json(result);
