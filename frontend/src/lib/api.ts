@@ -127,16 +127,23 @@ export const api = {
     }
     return data;
   },
-  downloadBlob: async (path: string, body?: any): Promise<Blob> => {
+  downloadBlob: async (
+    path: string,
+    body?: any,
+    method: 'GET' | 'POST' = 'POST',
+  ): Promise<Blob> => {
     const doFetch = () => {
       const token = typeof window !== 'undefined' ? localStorage.getItem('token') : null;
+      const headers: Record<string, string> = token ? { Authorization: `Bearer ${token}` } : {};
+
+      if (method !== 'GET') {
+        headers['Content-Type'] = 'application/json';
+      }
+
       return fetch(`${BASE}${path}`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          ...(token ? { Authorization: `Bearer ${token}` } : {}),
-        },
-        body: JSON.stringify(body),
+        method,
+        headers,
+        body: method === 'GET' ? undefined : JSON.stringify(body),
       });
     };
 

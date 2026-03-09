@@ -130,16 +130,7 @@ export default function CommsPlanPage() {
     const exportExcel = async () => {
         try {
             setExporting(true);
-            const token = localStorage.getItem('auth_token');
-            const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001'}/api/comms-plan/export/excel`, {
-                headers: {
-                    'Authorization': `Bearer ${token}`
-                }
-            });
-
-            if (!res.ok) throw new Error('Failed to export Excel');
-
-            const blob = await res.blob();
+            const blob = await api.downloadBlob('/comms-plan/export/excel', undefined, 'GET');
             const url = window.URL.createObjectURL(blob);
             const a = document.createElement('a');
             a.href = url;

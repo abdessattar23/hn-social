@@ -63,9 +63,7 @@ interface PersonalMessageBatch {
     attachments: AssetManifest[];
 }
 
-type RawPersonalMessageBatch = Omit<PersonalMessageBatch, "attachments"> & {
-    attachments?: unknown;
-};
+type RawPersonalMessageBatch = Omit<PersonalMessageBatch, "attachments">;
 
 interface PersonalMessageItem {
     id: number;
@@ -79,6 +77,9 @@ interface PersonalMessageItem {
     sent_at: string | null;
     application_id: string | null;
 }
+
+const ATTACHMENT_TEMPLATE_PREFIX = "sys-pm-attachments:";
+const ATTACHMENT_TEMPLATE_TAG = "system:personal-batch-attachments";
 
 function normalizeAttachments(attachments: unknown): AssetManifest[] {
     if (!Array.isArray(attachments)) return [];
@@ -115,6 +116,121 @@ function normalizeBatchRecord<T extends { attachments?: unknown }>(
     };
 }
 
+function buildAttachmentTemplateName(batchId: number): string {
+    return `${ATTACHMENT_TEMPLATE_PREFIX}${batchId}`;
+}
+
+function buildAttachmentTemplateTags(batchId: number): string[] {
+    return [
+        ATTACHMENT_TEMPLATE_TAG,
+        `${ATTACHMENT_TEMPLATE_PREFIX}${batchId}`,
+    ];
+}
+
+function extractBatchIdFromTemplateName(name: string): number | null {
+    if (!name.startsWith(ATTACHMENT_TEMPLATE_PREFIX)) return null;
+    const rawId = name.slice(ATTACHMENT_TEMPLATE_PREFIX.length);
+    const parsed = Number(rawId);
+    return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
+}
+
+async function loadAttachmentMap(
+    orgId: number,
+): Promise<Map<number, AssetManifest[]>> {
+    const { data, error } = await db
+        .from("message_templates")
+        .select("name, attachments")
+        .eq("org_id", orgId)
+        .like("name", `${ATTACHMENT_TEMPLATE_PREFIX}%`);
+    if (error) throw new BadRequestError(error.message);
+
+    const map = new Map<number, AssetManifest[]>();
+    for (const row of data || []) {
+        const batchId = extractBatchIdFromTemplateName(String(row.name || ""));
+        if (!batchId) continue;
+        map.set(batchId, normalizeAttachments(row.attachments));
+    }
+    return map;
+}
+
+async function findAttachmentTemplate(batchId: number, orgId: number) {
+    const { data, error } = await db
+        .from("message_templates")
+        .select("id, attachments")
+        .eq("org_id", orgId)
+        .eq("name", buildAttachmentTemplateName(batchId))
+        .maybeSingle();
+    if (error) throw new BadRequestError(error.message);
+    return data
+        ? {
+            id: Number(data.id),
+            attachments: normalizeAttachments(data.attachments),
+        }
+        : null;
+}
+
+async function writeAttachmentTemplate(
+    batch: RawPersonalMessageBatch,
+    attachments: AssetManifest[],
+) {
+    const existing = await findAttachmentTemplate(batch.id, batch.org_id);
+
+    if (attachments.length === 0) {
+        if (existing) {
+            const { error } = await db
+                .from("message_templates")
+                .delete()
+                .eq("id", existing.id)
+                .eq("org_id", batch.org_id);
+            if (error) throw new BadRequestError(error.message);
+        }
+        return;
+    }
+
+    if (existing) {
+        const { error } = await db
+            .from("message_templates")
+            .update({ attachments })
+            .eq("id", existing.id)
+            .eq("org_id", batch.org_id);
+        if (error) throw new BadRequestError(error.message);
+        return;
+    }
+
+    const { error } = await db
+        .from("message_templates")
+        .insert({
+            name: buildAttachmentTemplateName(batch.id),
+            type: batch.channel,
+            subject: null,
+            body: "Internal attachment store",
+            org_id: batch.org_id,
+            user_id: batch.user_id,
+            attachments,
+            tags: buildAttachmentTemplateTags(batch.id),
+        });
+    if (error) throw new BadRequestError(error.message);
+}
+
+async function purgeBatchAttachmentStore(
+    batchId: number,
+    orgId: number,
+): Promise<void> {
+    const existing = await findAttachmentTemplate(batchId, orgId);
+    if (!existing) return;
+
+    if (existing.attachments.length > 0) {
+        await purgeAttachmentAssets(existing.attachments);
+    }
+
+    const { error } = await db
+        .from("message_templates")
+        .delete()
+        .eq("id", existing.id)
+        .eq("org_id", orgId);
+    if (error) throw new BadRequestError(error.message);
+}
+
 async function materializeBatchRecord(
     id: number,
     orgId: number,
@@ -126,7 +242,11 @@ async function materializeBatchRecord(
         .eq("org_id", orgId)
         .single();
     if (error || !data) throw new NotFoundError("Personal message batch not found");
-    return normalizeBatchRecord(data as RawPersonalMessageBatch);
+    const attachmentTemplate = await findAttachmentTemplate(id, orgId);
+    return normalizeBatchRecord({
+        ...(data as RawPersonalMessageBatch),
+        attachments: attachmentTemplate?.attachments || [],
+    });
 }
 
 async function purgeAttachmentAssets(
@@ -187,8 +307,12 @@ export async function findAll(orgId: number) {
         .eq("org_id", orgId)
         .order("created_at", { ascending: false });
     if (error) throw new BadRequestError(error.message);
+    const attachmentMap = await loadAttachmentMap(orgId);
     return (data || []).map((row) =>
-        normalizeBatchRecord(row as RawPersonalMessageBatch),
+        normalizeBatchRecord({
+            ...(row as RawPersonalMessageBatch),
+            attachments: attachmentMap.get(Number(row.id)) || [],
+        }),
     );
 }
 
@@ -226,20 +350,20 @@ export async function create(
             account_id: data.accountId,
             org_id: orgId,
             user_id: userId,
-            attachments: [],
         })
         .select()
         .single();
     if (error) throw new BadRequestError(error.message);
-    return normalizeBatchRecord(batch as RawPersonalMessageBatch);
+    return normalizeBatchRecord({
+        ...(batch as RawPersonalMessageBatch),
+        attachments: [],
+    });
 }
 
 export async function remove(id: number, orgId: number) {
     const batch = await materializeBatchRecord(id, orgId);
 
-    if (batch.attachments.length > 0) {
-        await purgeAttachmentAssets(batch.attachments);
-    }
+    await purgeBatchAttachmentStore(id, orgId);
 
     // Items cascade-delete via FK
     const { error } = await db
@@ -280,13 +404,11 @@ export async function addAttachment(id: number, orgId: number, file: File) {
         },
     ];
 
-    const { error } = await db
-        .from("personal_messages")
-        .update({ attachments })
-        .eq("id", id);
-    if (error) {
+    try {
+        await writeAttachmentTemplate(batch, attachments);
+    } catch (error) {
         await deleteUpload(saved.path).catch(() => { });
-        throw new BadRequestError(error.message);
+        throw error;
     }
 
     return findOne(id, orgId);
@@ -314,11 +436,7 @@ export async function removeAttachment(
     const attachments = batch.attachments.filter(
         (attachment) => attachment.filename !== filename,
     );
-    const { error } = await db
-        .from("personal_messages")
-        .update({ attachments })
-        .eq("id", id);
-    if (error) throw new BadRequestError(error.message);
+    await writeAttachmentTemplate(batch, attachments);
 
     return findOne(id, orgId);
 }
@@ -536,7 +654,6 @@ export async function syncFromApplications(
             org_id: orgId,
             user_id: userId,
             sync_target_status: syncTargetStatus,
-            attachments: [],
         })
         .select()
         .single();
@@ -591,6 +708,7 @@ export async function syncFromApplications(
 
     return normalizeBatchRecord({
         ...(batch as RawPersonalMessageBatch),
+        attachments: [],
         total: items.length,
         itemCount: items.length,
     });
