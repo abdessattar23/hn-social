@@ -94,6 +94,7 @@ const cascadeDeleteRelatedCampaigns = async (
 const messages = new Hono();
 messages.use("*", authMiddleware);
 const PERSONAL_ATTACHMENT_TEMPLATE_PREFIX = "sys-pm-attachments:";
+const COMMS_PLAN_TEMPLATE_PREFIX = "sys-comms-plan:";
 
 messages.get("/", async (c) => {
   const user = c.get("user");
@@ -102,6 +103,7 @@ messages.get("/", async (c) => {
     .select("*")
     .eq("org_id", user.orgId)
     .not("name", "like", `${PERSONAL_ATTACHMENT_TEMPLATE_PREFIX}%`)
+    .not("name", "like", `${COMMS_PLAN_TEMPLATE_PREFIX}%`)
     .order("created_at", { ascending: false });
   if (error) throw new BadRequestError(error.message);
   return c.json(data || []);

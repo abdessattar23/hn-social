@@ -1,9 +1,10 @@
 'use client';
-import { useEffect, useState, useCallback } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { api } from '@/lib/api';
 import { useRequireAuth } from '@/lib/useRequireAuth';
 import { AnimatedPage } from '@/components/motion';
-import { motion } from 'framer-motion';
+import { RichTextEditor } from '@/components/rich-text-editor';
+import { AnimatePresence, motion } from 'framer-motion';
 import { Download, Loader2 } from 'lucide-react';
 
 interface JourneyStep {
@@ -14,6 +15,14 @@ interface JourneyStep {
     content: string;
     templateType: 'bulk' | 'personal';
     who: string;
+    globalLuma: 'Yes' | '-';
+}
+
+interface CommsJourneyTemplate {
+    id: number;
+    name: string;
+    subject: string | null;
+    body: string;
 }
 
 interface StepStatus {
@@ -29,79 +38,114 @@ interface StepStatus {
 
 interface CommsPlanRow {
     step: JourneyStep;
+    template: CommsJourneyTemplate | null;
     batches: Record<number, StepStatus>;
 }
 
-interface BatchLabel {
+interface BatchScheduleDetails {
     number: number;
     label: string;
-    timeframe: string;
+    applicationDeadline: string;
+    commsDecisionDate: string;
+    journeyStartDate: string | null;
+    journeyEndDate: string | null;
+}
+
+interface PlanMilestone {
+    key: 'hackathon_date' | 'hub_prio_cutoff';
+    label: string;
+    date: string;
+}
+
+interface CommsPlanMetadataResponse {
+    batches: BatchScheduleDetails[];
+    milestones: PlanMilestone[];
+}
+
+interface TemplateDraft {
+    name: string;
+    subject: string;
+    body: string;
 }
 
 const BATCH_NUMBERS = [1, 2, 3, 4, 5, 6] as const;
 
-function formatShortDate(iso: string) {
+function formatLongDate(iso: string) {
     return new Date(`${iso}T00:00:00`).toLocaleDateString('en-US', {
         month: 'short',
         day: 'numeric',
+        year: 'numeric',
     });
 }
 
-function buildBatchLabels(plan: CommsPlanRow[]): BatchLabel[] {
-    return BATCH_NUMBERS.map((number) => {
-        const dates = plan
-            .map((row) => row.batches[number]?.planned_date)
-            .filter((date): date is string => Boolean(date))
-            .sort();
-
-        const start = dates[0];
-        const end = dates[dates.length - 1];
-
-        return {
-            number,
-            label: `B${number}`,
-            timeframe: start && end
-                ? `${formatShortDate(start)} \u2013 ${formatShortDate(end)}`
-                : 'No schedule',
-        };
-    });
+function previewTemplateBody(body: string) {
+    return body
+        .replace(/<[^>]*>/g, ' ')
+        .replace(/&nbsp;/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim()
+        .slice(0, 140);
 }
 
-const statusStyles: Record<string, { bg: string; text: string; icon: string; label: string }> = {
-    pending: { bg: 'bg-surface-2', text: 'text-dark-5', icon: '○', label: 'Pending' },
-    done: { bg: 'bg-green-light-7', text: 'text-green', icon: '✓', label: 'Done' },
-    skipped: { bg: 'bg-gray-2', text: 'text-dark-5', icon: '⏭', label: 'Skipped' },
-};
+function buildPersonalizationLabel(type: JourneyStep['templateType']) {
+    return type === 'bulk' ? 'Bulk' : 'Personal';
+}
 
-const nextStatus: Record<string, 'pending' | 'done' | 'skipped'> = {
-    pending: 'done',
-    done: 'skipped',
-    skipped: 'pending',
-};
+function getMilestoneDate(milestones: PlanMilestone[], key: PlanMilestone['key']) {
+    return milestones.find((milestone) => milestone.key === key)?.date || null;
+}
 
-const templateBadge = (type: string) => {
-    if (type === 'bulk') return 'bg-blue-light-5 text-blue';
-    return 'bg-purple-100 text-purple-700';
+const statusStyles: Record<StepStatus['status'], { label: string; tone: string; accent: string; icon: string }> = {
+    pending: {
+        label: 'Pending',
+        tone: 'bg-white border-stroke/70 text-dark',
+        accent: 'text-dark-6',
+        icon: '',
+    },
+    done: {
+        label: 'Done',
+        tone: 'bg-green-light-7 border-green/20 text-green',
+        accent: 'text-green',
+        icon: '✓',
+    },
+    skipped: {
+        label: 'Skipped',
+        tone: 'bg-gray-2 border-gray-3 text-dark-5',
+        accent: 'text-dark-5',
+        icon: '⏭',
+    },
 };
 
 export default function CommsPlanPage() {
     const { authed } = useRequireAuth();
     const [plan, setPlan] = useState<CommsPlanRow[]>([]);
-    const [batchLabels, setBatchLabels] = useState<BatchLabel[]>([]);
+    const [batchSchedules, setBatchSchedules] = useState<BatchScheduleDetails[]>([]);
+    const [milestones, setMilestones] = useState<PlanMilestone[]>([]);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState('');
     const [toggling, setToggling] = useState<string | null>(null);
     const [exporting, setExporting] = useState(false);
+    const [editingRow, setEditingRow] = useState<CommsPlanRow | null>(null);
+    const [templateDraft, setTemplateDraft] = useState<TemplateDraft>({ name: '', subject: '', body: '' });
+    const [templateSaving, setTemplateSaving] = useState(false);
+    const [templateError, setTemplateError] = useState('');
 
     const load = useCallback(() => {
-        (api.get('/comms-plan') as Promise<CommsPlanRow[]>)
-            .then((planData) => {
-                const rows = planData || [];
-                setPlan(rows);
-                setBatchLabels(buildBatchLabels(rows));
+        setLoading(true);
+        Promise.all([
+            api.get('/comms-plan') as Promise<CommsPlanRow[]>,
+            api.get('/comms-plan/metadata') as Promise<CommsPlanMetadataResponse>,
+        ])
+            .then(([planData, metadata]) => {
+                setPlan(planData || []);
+                setBatchSchedules(metadata?.batches || []);
+                setMilestones(metadata?.milestones || []);
                 setLoading(false);
             })
-            .catch((err: Error) => { setError(err.message || 'Failed to load'); setLoading(false); });
+            .catch((err: Error) => {
+                setError(err.message || 'Failed to load');
+                setLoading(false);
+            });
     }, []);
 
     useEffect(() => {
@@ -109,13 +153,18 @@ export default function CommsPlanPage() {
         load();
     }, [authed, load]);
 
-    const toggle = async (stepKey: string, batchNumber: number, currentStatus: string) => {
+    const toggle = async (stepKey: string, batchNumber: number, currentStatus: StepStatus['status']) => {
         const key = `${stepKey}:${batchNumber}`;
         setToggling(key);
         try {
-            const newStatus = nextStatus[currentStatus] || 'done';
-            await api.patch(`/comms-plan/${stepKey}/${batchNumber}`, { status: newStatus });
-            // Optimistic update
+            const nextStatus =
+                currentStatus === 'pending'
+                    ? 'done'
+                    : currentStatus === 'done'
+                        ? 'skipped'
+                        : 'pending';
+
+            await api.patch(`/comms-plan/${stepKey}/${batchNumber}`, { status: nextStatus });
             setPlan((prev) =>
                 prev.map((row) => {
                     if (row.step.key !== stepKey) return row;
@@ -125,7 +174,7 @@ export default function CommsPlanPage() {
                             ...row.batches,
                             [batchNumber]: {
                                 ...row.batches[batchNumber],
-                                status: newStatus,
+                                status: nextStatus,
                                 auto_detected: false,
                             },
                         },
@@ -136,6 +185,74 @@ export default function CommsPlanPage() {
             setError(err instanceof Error ? err.message : 'Failed to update');
         } finally {
             setToggling(null);
+        }
+    };
+
+    const openTemplateEditor = (row: CommsPlanRow) => {
+        setEditingRow(row);
+        setTemplateDraft({
+            name: row.template?.name || `${row.step.code} ${row.step.label}`,
+            subject: row.template?.subject || '',
+            body: row.template?.body || row.step.content,
+        });
+        setTemplateError('');
+    };
+
+    const closeTemplateEditor = () => {
+        if (templateSaving) return;
+        setEditingRow(null);
+        setTemplateError('');
+        setTemplateDraft({ name: '', subject: '', body: '' });
+    };
+
+    const saveTemplate = async () => {
+        if (!editingRow) return;
+        if (!previewTemplateBody(templateDraft.body)) {
+            setTemplateError('Template text is required');
+            return;
+        }
+
+        try {
+            setTemplateSaving(true);
+            const saved = await api.put(
+                `/comms-plan/${editingRow.step.key}/template`,
+                templateDraft,
+            ) as CommsJourneyTemplate;
+
+            setPlan((prev) =>
+                prev.map((row) =>
+                    row.step.key === editingRow.step.key
+                        ? { ...row, template: saved }
+                        : row,
+                ),
+            );
+            closeTemplateEditor();
+        } catch (err: any) {
+            setTemplateError(err.message || 'Failed to save template');
+        } finally {
+            setTemplateSaving(false);
+        }
+    };
+
+    const clearTemplate = async () => {
+        if (!editingRow?.template) return;
+        if (!confirm('Remove the stored template for this journey step?')) return;
+
+        try {
+            setTemplateSaving(true);
+            await api.del(`/comms-plan/${editingRow.step.key}/template`);
+            setPlan((prev) =>
+                prev.map((row) =>
+                    row.step.key === editingRow.step.key
+                        ? { ...row, template: null }
+                        : row,
+                ),
+            );
+            closeTemplateEditor();
+        } catch (err: any) {
+            setTemplateError(err.message || 'Failed to remove template');
+        } finally {
+            setTemplateSaving(false);
         }
     };
 
@@ -158,17 +275,21 @@ export default function CommsPlanPage() {
         }
     };
 
-    // Compute progress stats
-    const totalCells = plan.reduce((acc, row) => {
-        return acc + Object.values(row.batches).filter((cell) => cell.planned_date).length;
-    }, 0);
-    const doneCells = plan.reduce((acc, row) => {
-        return acc + Object.values(row.batches).filter((b) => b.planned_date && b.status === 'done').length;
-    }, 0);
-    const skippedCells = plan.reduce((acc, row) => {
-        return acc + Object.values(row.batches).filter((b) => b.planned_date && b.status === 'skipped').length;
-    }, 0);
+    const totalCells = useMemo(
+        () => plan.reduce((acc, row) => acc + Object.values(row.batches).filter((cell) => cell.planned_date).length, 0),
+        [plan],
+    );
+    const doneCells = useMemo(
+        () => plan.reduce((acc, row) => acc + Object.values(row.batches).filter((cell) => cell.planned_date && cell.status === 'done').length, 0),
+        [plan],
+    );
+    const skippedCells = useMemo(
+        () => plan.reduce((acc, row) => acc + Object.values(row.batches).filter((cell) => cell.planned_date && cell.status === 'skipped').length, 0),
+        [plan],
+    );
     const completedPercent = totalCells > 0 ? Math.round(((doneCells + skippedCells) / totalCells) * 100) : 0;
+    const hackathonDate = getMilestoneDate(milestones, 'hackathon_date');
+    const hubPrioCutoffDate = getMilestoneDate(milestones, 'hub_prio_cutoff');
 
     if (!authed) return null;
 
@@ -177,7 +298,7 @@ export default function CommsPlanPage() {
             <div className="mb-6 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
                 <div>
                     <h1 className="text-2xl font-bold text-dark mb-1 tracking-tight">Communication Plan</h1>
-                    <p className="text-sm text-dark-5">Track every step of the hackathon communication journey across all batches.</p>
+                    <p className="text-sm text-dark-5">Mirror the workbook schedule, manage template text per journey step, and keep phase tracking clickable.</p>
                 </div>
                 <button
                     onClick={exportExcel}
@@ -196,7 +317,6 @@ export default function CommsPlanPage() {
                 </div>
             )}
 
-            {/* Progress Overview */}
             <div className="rounded-2xl bg-surface p-5 shadow-1 border border-stroke/60 mb-6">
                 <div className="flex items-center justify-between mb-3">
                     <div className="flex items-center gap-3">
@@ -222,26 +342,25 @@ export default function CommsPlanPage() {
                 </div>
             </div>
 
-            {/* Legend */}
-            <div className="flex items-center gap-4 mb-4 text-xs">
+            <div className="flex items-center gap-4 mb-4 text-xs flex-wrap">
                 <span className="flex items-center gap-1.5">
-                    <span className="w-6 h-6 rounded-lg bg-surface-2 flex items-center justify-center text-dark-5">○</span>
+                    <span className="w-6 h-6 rounded-lg bg-white border border-stroke/70 flex items-center justify-center text-dark-5">○</span>
                     Pending
                 </span>
                 <span className="flex items-center gap-1.5">
-                    <span className="w-6 h-6 rounded-lg bg-green-light-7 flex items-center justify-center text-green font-bold">✓</span>
+                    <span className="w-6 h-6 rounded-lg bg-green-light-7 border border-green/20 flex items-center justify-center text-green font-bold">✓</span>
                     Done
                 </span>
                 <span className="flex items-center gap-1.5">
-                    <span className="w-6 h-6 rounded-lg bg-gray-2 flex items-center justify-center text-dark-5">⏭</span>
+                    <span className="w-6 h-6 rounded-lg bg-gray-2 border border-gray-3 flex items-center justify-center text-dark-5">⏭</span>
                     Skipped
                 </span>
                 <span className="flex items-center gap-1.5">
-                    <span className="w-6 h-6 rounded-lg bg-green-light-7 border-2 border-primary/40 flex items-center justify-center text-green font-bold text-[10px]">⚡</span>
+                    <span className="w-6 h-6 rounded-lg bg-white border border-primary/30 flex items-center justify-center text-primary font-bold text-[10px]">⚡</span>
                     Auto-detected
                 </span>
                 <span className="flex items-center gap-1.5">
-                    <span className="w-6 h-6 rounded-lg bg-surface-2/60 flex items-center justify-center text-dark-6">—</span>
+                    <span className="w-6 h-6 rounded-lg bg-surface-2/60 flex items-center justify-center text-dark-6">-</span>
                     Not scheduled
                 </span>
                 <button
@@ -255,146 +374,315 @@ export default function CommsPlanPage() {
                 </button>
             </div>
 
-            {/* Journey Table */}
             {loading ? (
                 <div className="rounded-2xl bg-surface p-16 shadow-1 text-center border border-stroke/60">
                     <div className="animate-spin text-3xl mb-3">⟳</div>
                     <p className="text-dark-5 text-sm">Loading communication plan...</p>
                 </div>
             ) : (
-                <div className="rounded-2xl bg-surface shadow-1 border border-stroke/60 overflow-hidden">
-                    <div className="overflow-x-auto">
-                        <table className="w-full text-sm">
-                            <thead>
-                                <tr className="bg-surface-2/50">
-                                    <th className="text-left px-4 py-3 text-dark-5 font-medium text-xs uppercase tracking-wider w-8">#</th>
-                                    <th className="text-left px-4 py-3 text-dark-5 font-medium text-xs uppercase tracking-wider min-w-[140px]">Step</th>
-                                    <th className="text-left px-4 py-3 text-dark-5 font-medium text-xs uppercase tracking-wider min-w-[200px] hidden lg:table-cell">Content</th>
-                                    <th className="text-left px-4 py-3 text-dark-5 font-medium text-xs uppercase tracking-wider w-20">Type</th>
-                                    <th className="text-left px-4 py-3 text-dark-5 font-medium text-xs uppercase tracking-wider min-w-[120px] hidden xl:table-cell">Who</th>
-                                    {batchLabels.map((b) => (
-                                        <th key={b.number} className="text-center px-2 py-3 text-dark-5 font-medium text-xs uppercase tracking-wider w-16">
-                                            <div>{b.label}</div>
-                                            <div className="text-[10px] font-normal normal-case text-dark-6 mt-0.5">{b.timeframe}</div>
-                                        </th>
-                                    ))}
-                                </tr>
-                            </thead>
-                            <tbody>
-                                {plan.map((row) => {
-                                    const rowApplicable = Object.values(row.batches).filter((b) => b.planned_date).length;
-                                    const rowDone = Object.values(row.batches).filter((b) => b.planned_date && (b.status === 'done' || b.status === 'skipped')).length;
-                                    const isRowComplete = rowApplicable > 0 && rowDone === rowApplicable;
-                                    return (
-                                        <tr
-                                            key={row.step.key}
-                                            className={`border-t border-stroke/30 transition-colors hover:bg-surface-2/30 ${isRowComplete ? 'opacity-60' : ''}`}
-                                        >
-                                            <td className="px-4 py-3 text-dark-5 text-xs font-mono">{row.step.code}</td>
-                                            <td className="px-4 py-3">
-                                                <span className="font-medium text-dark">{row.step.label}</span>
-                                            </td>
-                                            <td className="px-4 py-3 text-dark-5 text-xs hidden lg:table-cell">
-                                                {row.step.content}
-                                            </td>
-                                            <td className="px-4 py-3">
-                                                <span className={`inline-block px-2 py-0.5 rounded-md text-[11px] font-medium ${templateBadge(row.step.templateType)}`}>
-                                                    {row.step.templateType === 'bulk' ? 'Bulk' : 'Personal'}
-                                                </span>
-                                            </td>
-                                            <td className="px-4 py-3 text-dark-5 text-xs hidden xl:table-cell">{row.step.who}</td>
-                                            {batchLabels.map((b) => {
-                                                const cell = row.batches[b.number];
-                                                if (!cell.planned_date) {
+                <>
+                    <div className="rounded-2xl bg-surface shadow-1 border border-stroke/60 overflow-hidden mb-6">
+                        <div className="grid gap-4 lg:grid-cols-[280px_minmax(0,1fr)] p-4">
+                            <table className="w-full text-sm border border-stroke/60 rounded-xl overflow-hidden">
+                                <tbody>
+                                    <tr className="border-b border-stroke/60">
+                                        <th className="text-left px-4 py-3 bg-surface-2/50 text-dark font-medium">Hackathon Date</th>
+                                        <td className="px-4 py-3 text-dark-5">{hackathonDate ? formatLongDate(hackathonDate) : '-'}</td>
+                                    </tr>
+                                    <tr>
+                                        <th className="text-left px-4 py-3 bg-surface-2/50 text-dark font-medium">Hub prio cut-off</th>
+                                        <td className="px-4 py-3 text-dark-5">{hubPrioCutoffDate ? formatLongDate(hubPrioCutoffDate) : '-'}</td>
+                                    </tr>
+                                </tbody>
+                            </table>
+
+                            <div className="overflow-x-auto">
+                                <table className="min-w-[540px] w-full text-sm border border-stroke/60 rounded-xl overflow-hidden">
+                                    <thead className="bg-surface-2/50">
+                                        <tr>
+                                            <th className="text-left px-4 py-3 text-dark font-medium">Batch</th>
+                                            <th className="text-left px-4 py-3 text-dark font-medium">Application Deadline</th>
+                                            <th className="text-left px-4 py-3 text-dark font-medium">Comms Deadline decision</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        {batchSchedules.map((batch) => (
+                                            <tr key={batch.number} className="border-t border-stroke/40">
+                                                <td className="px-4 py-3 text-dark">{batch.label}</td>
+                                                <td className="px-4 py-3 text-dark-5">{formatLongDate(batch.applicationDeadline)}</td>
+                                                <td className="px-4 py-3 text-dark-5">{formatLongDate(batch.commsDecisionDate)}</td>
+                                            </tr>
+                                        ))}
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div className="rounded-2xl bg-surface shadow-1 border border-stroke/60 overflow-hidden">
+                        <div className="overflow-x-auto">
+                            <table className="w-full text-sm min-w-[1680px]">
+                                <thead>
+                                    <tr className="bg-stroke/15 border-b border-stroke/60">
+                                        <th colSpan={13} className="text-left px-4 py-3 text-dark font-semibold">Communication journey</th>
+                                    </tr>
+                                    <tr className="bg-surface-2/50">
+                                        <th className="text-left px-4 py-3 text-dark-5 font-medium min-w-[110px]">Journey step</th>
+                                        <th className="text-left px-4 py-3 text-dark-5 font-medium min-w-[170px]">Journey name</th>
+                                        <th className="text-left px-4 py-3 text-dark-5 font-medium min-w-[280px]">Content</th>
+                                        <th className="text-left px-4 py-3 text-dark-5 font-medium min-w-[280px]">Templates</th>
+                                        <th className="text-left px-4 py-3 text-dark-5 font-medium min-w-[140px]">Personalization</th>
+                                        <th className="text-left px-4 py-3 text-dark-5 font-medium min-w-[200px]">Who</th>
+                                        {BATCH_NUMBERS.map((number) => (
+                                            <th key={number} className="text-left px-3 py-3 text-dark-5 font-medium min-w-[122px]">{`When Batch ${number}`}</th>
+                                        ))}
+                                        <th className="text-left px-4 py-3 text-dark-5 font-medium min-w-[110px]">Global Luma</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {plan.map((row) => {
+                                        const rowApplicable = Object.values(row.batches).filter((cell) => cell.planned_date).length;
+                                        const rowClosed = Object.values(row.batches).filter((cell) => cell.planned_date && (cell.status === 'done' || cell.status === 'skipped')).length;
+                                        const rowComplete = rowApplicable > 0 && rowClosed === rowApplicable;
+                                        const templatePreview = row.template ? previewTemplateBody(row.template.body) : '';
+
+                                        return (
+                                            <tr
+                                                key={row.step.key}
+                                                className={`border-t border-stroke/40 align-top ${rowComplete ? 'opacity-70' : ''}`}
+                                            >
+                                                <td className="px-4 py-3 font-mono text-xs text-dark">{row.step.code}</td>
+                                                <td className="px-4 py-3 text-dark font-medium">{row.step.label}</td>
+                                                <td className="px-4 py-3 text-dark-5 whitespace-pre-line">{row.step.content}</td>
+                                                <td className="px-4 py-3">
+                                                    <button
+                                                        onClick={() => openTemplateEditor(row)}
+                                                        className="w-full rounded-xl border border-stroke/60 bg-surface-2/40 px-3 py-3 text-left transition hover:border-primary/30 hover:bg-surface-2"
+                                                    >
+                                                        {row.template ? (
+                                                            <>
+                                                                <div className="font-medium text-dark truncate">{row.template.name}</div>
+                                                                {row.template.subject ? (
+                                                                    <div className="text-[11px] text-dark-6 mt-1 truncate">{row.template.subject}</div>
+                                                                ) : null}
+                                                                <div className="text-[11px] text-dark-5 mt-2 leading-5">
+                                                                    {templatePreview || 'Template text stored'}
+                                                                </div>
+                                                                <div className="text-[11px] text-primary mt-2 font-medium">Edit template</div>
+                                                            </>
+                                                        ) : (
+                                                            <>
+                                                                <div className="font-medium text-primary">Add template</div>
+                                                                <div className="text-[11px] text-dark-6 mt-2">Store the message text for this journey step directly inside the plan.</div>
+                                                            </>
+                                                        )}
+                                                    </button>
+                                                </td>
+                                                <td className="px-4 py-3">
+                                                    <div className="inline-flex items-center rounded-xl border border-stroke/60 bg-surface-2 px-3 py-2 text-xs font-medium text-dark">
+                                                        {buildPersonalizationLabel(row.step.templateType)}
+                                                    </div>
+                                                </td>
+                                                <td className="px-4 py-3 text-dark-5">{row.step.who}</td>
+                                                {BATCH_NUMBERS.map((batchNumber) => {
+                                                    const cell = row.batches[batchNumber];
+                                                    if (!cell.planned_date) {
+                                                        return (
+                                                            <td key={batchNumber} className="px-3 py-3 text-dark-6">
+                                                                -
+                                                            </td>
+                                                        );
+                                                    }
+
+                                                    const isToggling = toggling === `${row.step.key}:${batchNumber}`;
+                                                    const isOverdue = cell.status === 'pending' && new Date(`${cell.planned_date}T23:59:59.999`) < new Date();
+                                                    const statusStyle = statusStyles[cell.status];
+                                                    const overdueTone = isOverdue
+                                                        ? 'bg-red-light-6 border-red/20 text-red'
+                                                        : statusStyle.tone;
+
                                                     return (
-                                                        <td key={b.number} className="px-2 py-3 text-center">
-                                                            <div
-                                                                className="w-8 h-8 rounded-lg bg-surface-2/60 text-dark-6 text-sm flex items-center justify-center mx-auto"
-                                                                title="Not scheduled for this batch"
+                                                        <td key={batchNumber} className="px-3 py-3">
+                                                            <motion.button
+                                                                whileHover={{ scale: 1.01 }}
+                                                                whileTap={{ scale: 0.99 }}
+                                                                onClick={() => toggle(row.step.key, batchNumber, cell.status)}
+                                                                disabled={isToggling}
+                                                                className={`relative w-full rounded-xl border px-3 py-3 text-left text-[11px] leading-4 transition ${overdueTone} ${isToggling ? 'opacity-50' : 'hover:shadow-sm'}`}
+                                                                title={`${formatLongDate(cell.planned_date)} - ${isOverdue ? 'Missed deadline' : statusStyle.label}${cell.auto_detected ? ' - auto-detected' : ''} - click to change`}
                                                             >
-                                                                —
-                                                            </div>
+                                                                <span className={`block font-medium ${isOverdue ? 'text-red' : statusStyle.accent}`}>
+                                                                    {formatLongDate(cell.planned_date)}
+                                                                </span>
+                                                                {statusStyle.icon ? (
+                                                                    <span className="absolute bottom-2 right-2 text-[11px]">{statusStyle.icon}</span>
+                                                                ) : null}
+                                                                {cell.auto_detected ? (
+                                                                    <span className="absolute top-2 right-2 text-[10px] text-primary">⚡</span>
+                                                                ) : null}
+                                                            </motion.button>
                                                         </td>
                                                     );
-                                                }
-
-                                                const st = statusStyles[cell.status] || statusStyles.pending;
-                                                const isToggling = toggling === `${row.step.key}:${b.number}`;
-                                                const plannedDateLabel = new Date(`${cell.planned_date}T00:00:00`).toLocaleDateString('en-US', {
-                                                    month: 'short',
-                                                    day: 'numeric',
-                                                    year: 'numeric',
-                                                });
-                                                return (
-                                                    <td key={b.number} className="px-2 py-3 text-center">
-                                                        <motion.button
-                                                            whileHover={{ scale: 1.15 }}
-                                                            whileTap={{ scale: 0.9 }}
-                                                            onClick={() => toggle(row.step.key, b.number, cell.status)}
-                                                            disabled={isToggling}
-                                                            className={`w-8 h-8 rounded-lg ${st.bg} ${st.text} font-bold text-sm flex items-center justify-center mx-auto transition-all ${isToggling ? 'opacity-50' : 'cursor-pointer hover:shadow-md'} ${cell.auto_detected ? 'ring-2 ring-primary/40' : ''}`}
-                                                            title={`${plannedDateLabel} — ${st.label}${cell.auto_detected ? ' (auto-detected)' : ''} — Click to change`}
-                                                        >
-                                                            {cell.auto_detected && cell.status === 'done' ? '⚡' : st.icon}
-                                                        </motion.button>
-                                                    </td>
-                                                );
-                                            })}
-                                        </tr>
-                                    );
-                                })}
-                            </tbody>
-                        </table>
+                                                })}
+                                                <td className="px-4 py-3 text-dark-5">{row.step.globalLuma}</td>
+                                            </tr>
+                                        );
+                                    })}
+                                </tbody>
+                            </table>
+                        </div>
                     </div>
-                </div>
+
+                    <div className="mt-6 grid grid-cols-2 md:grid-cols-3 xl:grid-cols-5 gap-3">
+                        {plan.map((row) => {
+                            const applicableBatches = Object.values(row.batches).filter((cell) => cell.planned_date).length;
+                            const doneBatches = Object.values(row.batches).filter((cell) => cell.planned_date && cell.status === 'done').length;
+                            const skippedBatches = Object.values(row.batches).filter((cell) => cell.planned_date && cell.status === 'skipped').length;
+                            const progress = applicableBatches > 0
+                                ? Math.round(((doneBatches + skippedBatches) / applicableBatches) * 100)
+                                : 0;
+
+                            return (
+                                <motion.div
+                                    key={row.step.key}
+                                    initial={{ opacity: 0, y: 8 }}
+                                    animate={{ opacity: 1, y: 0 }}
+                                    transition={{ delay: row.step.order * 0.03 }}
+                                    className="rounded-xl bg-surface p-3 shadow-1 border border-stroke/40"
+                                >
+                                    <div className="flex items-center justify-between mb-2 gap-2">
+                                        <span className="text-xs font-medium text-dark truncate">{row.step.label}</span>
+                                        <span className={`text-xs font-bold ${progress === 100 ? 'text-green' : 'text-dark-5'}`}>{progress}%</span>
+                                    </div>
+                                    <div className="h-1 bg-surface-2 rounded-full overflow-hidden">
+                                        <motion.div
+                                            className={`h-full rounded-full ${progress === 100 ? 'bg-green' : 'bg-primary'}`}
+                                            initial={{ width: 0 }}
+                                            animate={{ width: `${progress}%` }}
+                                            transition={{ duration: 0.4, ease: 'easeOut' }}
+                                        />
+                                    </div>
+                                    <div className="flex gap-1 mt-2">
+                                        {BATCH_NUMBERS.map((batchNumber) => {
+                                            const cell = row.batches[batchNumber];
+                                            const color = !cell.planned_date
+                                                ? 'bg-surface-2/40'
+                                                : cell.status === 'done'
+                                                    ? 'bg-green'
+                                                    : cell.status === 'skipped'
+                                                        ? 'bg-dark-5'
+                                                        : 'bg-surface-2';
+                                            return <div key={batchNumber} className={`flex-1 h-1 rounded-full ${color}`} />;
+                                        })}
+                                    </div>
+                                </motion.div>
+                            );
+                        })}
+                    </div>
+                </>
             )}
 
-            {/* Per-Step Summary Cards */}
-            <div className="mt-6 grid grid-cols-2 md:grid-cols-3 xl:grid-cols-5 gap-3">
-                {plan.map((row) => {
-                    const applicableBatches = Object.values(row.batches).filter((b) => b.planned_date).length;
-                    const doneBatches = Object.values(row.batches).filter((b) => b.planned_date && b.status === 'done').length;
-                    const skippedBatches = Object.values(row.batches).filter((b) => b.planned_date && b.status === 'skipped').length;
-                    const stepProgress = applicableBatches > 0
-                        ? Math.round(((doneBatches + skippedBatches) / applicableBatches) * 100)
-                        : 0;
-                    return (
+            <AnimatePresence>
+                {editingRow ? (
+                    <motion.div
+                        className="fixed inset-0 bg-black/40 z-[100] flex items-center justify-center p-4"
+                        initial={{ opacity: 0 }}
+                        animate={{ opacity: 1 }}
+                        exit={{ opacity: 0 }}
+                        onClick={closeTemplateEditor}
+                    >
                         <motion.div
-                            key={row.step.key}
-                            initial={{ opacity: 0, y: 8 }}
-                            animate={{ opacity: 1, y: 0 }}
-                            transition={{ delay: row.step.order * 0.03 }}
-                            className="rounded-xl bg-surface p-3 shadow-1 border border-stroke/40"
+                            initial={{ opacity: 0, y: 18, scale: 0.98 }}
+                            animate={{ opacity: 1, y: 0, scale: 1 }}
+                            exit={{ opacity: 0, y: 18, scale: 0.98 }}
+                            transition={{ duration: 0.18 }}
+                            onClick={(event) => event.stopPropagation()}
+                            className="w-full max-w-4xl rounded-2xl bg-surface border border-stroke/60 shadow-1 overflow-hidden"
                         >
-                            <div className="flex items-center justify-between mb-2">
-                                <span className="text-xs font-medium text-dark truncate">{row.step.label}</span>
-                                <span className={`text-xs font-bold ${stepProgress === 100 ? 'text-green' : 'text-dark-5'}`}>{stepProgress}%</span>
+                            <div className="px-6 py-4 border-b border-stroke/60 flex items-start justify-between gap-4">
+                                <div>
+                                    <p className="text-xs uppercase tracking-wider text-dark-6">Template editor</p>
+                                    <h2 className="text-lg font-semibold text-dark mt-1">{editingRow.step.code} {editingRow.step.label}</h2>
+                                    <p className="text-sm text-dark-5 mt-1">{editingRow.step.content}</p>
+                                </div>
+                                <button
+                                    onClick={closeTemplateEditor}
+                                    className="text-dark-6 hover:text-dark transition-colors"
+                                    type="button"
+                                >
+                                    Close
+                                </button>
                             </div>
-                            <div className="h-1 bg-surface-2 rounded-full overflow-hidden">
-                                <motion.div
-                                    className={`h-full rounded-full ${stepProgress === 100 ? 'bg-green' : 'bg-primary'}`}
-                                    initial={{ width: 0 }}
-                                    animate={{ width: `${stepProgress}%` }}
-                                    transition={{ duration: 0.4, ease: 'easeOut' }}
-                                />
+
+                            <div className="px-6 py-5 space-y-4 max-h-[80vh] overflow-y-auto">
+                                {templateError ? (
+                                    <div className="bg-red-light-6 border border-red/20 text-red rounded-xl px-4 py-3 text-sm">
+                                        {templateError}
+                                    </div>
+                                ) : null}
+
+                                <div className="grid md:grid-cols-2 gap-4">
+                                    <div>
+                                        <label className="block text-xs font-medium text-dark-5 uppercase tracking-wider mb-2">Template name</label>
+                                        <input
+                                            value={templateDraft.name}
+                                            onChange={(event) => setTemplateDraft((prev) => ({ ...prev, name: event.target.value }))}
+                                            className="w-full border border-stroke rounded-xl px-4 py-3 text-sm outline-none transition focus:border-primary bg-surface-2"
+                                            placeholder="Accepted template"
+                                        />
+                                    </div>
+                                    <div>
+                                        <label className="block text-xs font-medium text-dark-5 uppercase tracking-wider mb-2">Subject</label>
+                                        <input
+                                            value={templateDraft.subject}
+                                            onChange={(event) => setTemplateDraft((prev) => ({ ...prev, subject: event.target.value }))}
+                                            className="w-full border border-stroke rounded-xl px-4 py-3 text-sm outline-none transition focus:border-primary bg-surface-2"
+                                            placeholder="Optional email subject"
+                                        />
+                                    </div>
+                                </div>
+
+                                <div>
+                                    <label className="block text-xs font-medium text-dark-5 uppercase tracking-wider mb-2">Template text</label>
+                                    <RichTextEditor
+                                        content={templateDraft.body}
+                                        onChange={(body) => setTemplateDraft((prev) => ({ ...prev, body }))}
+                                        minHeight="260px"
+                                    />
+                                </div>
                             </div>
-                            <div className="flex gap-1 mt-2">
-                                {batchLabels.map((b) => {
-                                    const cell = row.batches[b.number];
-                                    const color = !cell.planned_date
-                                        ? 'bg-surface-2/40'
-                                        : cell.status === 'done'
-                                            ? 'bg-green'
-                                            : cell.status === 'skipped'
-                                                ? 'bg-dark-5'
-                                                : 'bg-surface-2';
-                                    return <div key={b.number} className={`flex-1 h-1 rounded-full ${color}`} />;
-                                })}
+
+                            <div className="px-6 py-4 border-t border-stroke/60 flex items-center justify-between gap-3">
+                                <button
+                                    type="button"
+                                    onClick={clearTemplate}
+                                    disabled={!editingRow.template || templateSaving}
+                                    className="text-sm text-red hover:text-red/80 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                                >
+                                    Remove template
+                                </button>
+                                <div className="flex items-center gap-3">
+                                    <button
+                                        type="button"
+                                        onClick={closeTemplateEditor}
+                                        className="px-4 py-2 text-sm text-dark-5 hover:text-dark transition-colors"
+                                    >
+                                        Cancel
+                                    </button>
+                                    <button
+                                        type="button"
+                                        onClick={saveTemplate}
+                                        disabled={templateSaving}
+                                        className="px-4 py-2 bg-primary text-white text-sm font-medium rounded-xl hover:bg-primary/90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                                    >
+                                        {templateSaving ? 'Saving...' : 'Save template'}
+                                    </button>
+                                </div>
                             </div>
                         </motion.div>
-                    );
-                })}
-            </div>
+                    </motion.div>
+                ) : null}
+            </AnimatePresence>
         </AnimatedPage>
     );
 }

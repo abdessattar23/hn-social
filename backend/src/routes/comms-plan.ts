@@ -20,6 +20,38 @@ commsPlanRouter.get("/steps", (c) => {
     return c.json(commsPlan.listJourneySteps());
 });
 
+commsPlanRouter.get("/metadata", (c) => {
+    return c.json({
+        batches: commsPlan.listBatchScheduleDetails(),
+        milestones: commsPlan.listPlanMilestones(),
+    });
+});
+
+commsPlanRouter.put("/:stepKey/template", async (c) => {
+    const user = resolveUserContext(c);
+    const stepKey = c.req.param("stepKey");
+
+    let body: { name?: string; subject?: string | null; body?: string } = {};
+    try {
+        body = await c.req.json<{ name?: string; subject?: string | null; body?: string }>();
+    } catch { }
+
+    const template = await commsPlan.upsertJourneyTemplate(
+        user.orgId,
+        user.id,
+        stepKey,
+        body,
+    );
+    return c.json(template);
+});
+
+commsPlanRouter.delete("/:stepKey/template", async (c) => {
+    const user = resolveUserContext(c);
+    const stepKey = c.req.param("stepKey");
+    const result = await commsPlan.deleteJourneyTemplate(user.orgId, stepKey);
+    return c.json(result);
+});
+
 commsPlanRouter.patch("/:stepKey/:batchNumber", async (c) => {
     const user = resolveUserContext(c);
     const stepKey = c.req.param("stepKey");
@@ -49,13 +81,14 @@ commsPlanRouter.patch("/:stepKey/:batchNumber", async (c) => {
     return c.json(result);
 });
 
-// Export to Excel
 commsPlanRouter.get("/export/excel", async (c) => {
     const user = resolveUserContext(c);
     const plan = await commsPlan.getFullPlan(user.orgId);
-    const batchWindows = commsPlan.listBatchCommunicationWindows();
+    const batchSchedules = commsPlan.listBatchScheduleDetails();
+    const milestones = commsPlan.listPlanMilestones();
+    const hackathonDate = milestones.find((milestone) => milestone.key === "hackathon_date")?.date || null;
+    const hubPrioCutoffDate = milestones.find((milestone) => milestone.key === "hub_prio_cutoff")?.date || null;
 
-    // Use dynamic import for exceljs to avoid loading it if not used
     const ExcelJS = await import("exceljs");
     const workbook = new ExcelJS.Workbook();
     workbook.creator = "Hack Nation";
@@ -64,125 +97,194 @@ commsPlanRouter.get("/export/excel", async (c) => {
     workbook.modified = new Date();
 
     const worksheet = workbook.addWorksheet("Comms Plan");
-
-    // Define columns
     worksheet.columns = [
-        { header: "#", key: "stepCode", width: 8 },
-        { header: "Step", key: "stepLabel", width: 25 },
-        { header: "Content", key: "content", width: 45 },
-        { header: "Type", key: "type", width: 15 },
-        { header: "Who", key: "who", width: 25 },
-        ...batchWindows.map((batch) => ({
-            header: batch.startDate && batch.endDate
-                ? `B${batch.number}\n${formatShortDate(batch.startDate)} - ${formatShortDate(batch.endDate)}`
-                : `B${batch.number}`,
-            key: `b${batch.number}`,
-            width: 16,
-        })),
+        { key: "a", width: 16 },
+        { key: "b", width: 22 },
+        { key: "c", width: 42 },
+        { key: "d", width: 28 },
+        { key: "e", width: 18 },
+        { key: "f", width: 26 },
+        { key: "g", width: 16 },
+        { key: "h", width: 16 },
+        { key: "i", width: 16 },
+        { key: "j", width: 16 },
+        { key: "k", width: 16 },
+        { key: "l", width: 16 },
+        { key: "m", width: 12 },
     ];
 
-    // Style header row
-    worksheet.getRow(1).font = { bold: true };
-    worksheet.getRow(1).alignment = { vertical: "middle", horizontal: "center", wrapText: true };
-    worksheet.getRow(1).height = 36;
+    const outline = {
+        top: { style: "thin" as const, color: { argb: "FFE5E7EB" } },
+        left: { style: "thin" as const, color: { argb: "FFE5E7EB" } },
+        bottom: { style: "thin" as const, color: { argb: "FFE5E7EB" } },
+        right: { style: "thin" as const, color: { argb: "FFE5E7EB" } },
+    };
+
+    const applyOutline = (row: any) => {
+        row.eachCell((cell) => {
+            cell.border = outline;
+        });
+    };
+
+    const hackathonRow = worksheet.addRow(["Hackathon Date", hackathonDate ? formatLongDate(hackathonDate) : "-"]);
+    applyOutline(hackathonRow);
+    worksheet.addRow([]);
+
+    const batchHeaderRow = worksheet.addRow(["Batch", "Application Deadline", "Comms Deadline decision"]);
+    batchHeaderRow.font = { bold: true };
+    batchHeaderRow.fill = {
+        type: "pattern",
+        pattern: "solid",
+        fgColor: { argb: "FFF3F4F6" },
+    };
+    applyOutline(batchHeaderRow);
+
+    batchSchedules.forEach((batch) => {
+        const row = worksheet.addRow([
+            batch.label,
+            formatLongDate(batch.applicationDeadline),
+            formatLongDate(batch.commsDecisionDate),
+        ]);
+        applyOutline(row);
+    });
+
+    worksheet.addRow([]);
+    const hubRow = worksheet.addRow(["Hub prio cut-off", hubPrioCutoffDate ? formatLongDate(hubPrioCutoffDate) : "-"]);
+    applyOutline(hubRow);
+
+    worksheet.addRow([]);
+    const titleRow = worksheet.addRow(["Communication journey"]);
+    worksheet.mergeCells(`A${titleRow.number}:M${titleRow.number}`);
+    titleRow.font = { bold: true };
+    titleRow.fill = {
+        type: "pattern",
+        pattern: "solid",
+        fgColor: { argb: "FFE5E7EB" },
+    };
+
+    const planHeaderRow = worksheet.addRow([
+        "Journey step",
+        "Journey name",
+        "Content",
+        "Templates",
+        "Personalization",
+        "Who",
+        "When Batch 1",
+        "When Batch 2",
+        "When Batch 3",
+        "When Batch 4",
+        "When Batch 5",
+        "When Batch 6",
+        "Global Luma",
+    ]);
+    planHeaderRow.font = { bold: true };
+    planHeaderRow.alignment = { vertical: "middle", horizontal: "center", wrapText: true };
+    planHeaderRow.fill = {
+        type: "pattern",
+        pattern: "solid",
+        fgColor: { argb: "FFF3F4F6" },
+    };
+    applyOutline(planHeaderRow);
+
     const now = new Date();
 
-    // Populate rows
     plan.forEach((row) => {
-        const rowData = {
-            stepCode: row.step.code,
-            stepLabel: row.step.label,
-            content: row.step.content,
-            type: row.step.templateType === "bulk" ? "Bulk" : "Personal",
-            who: row.step.who,
-        };
+        const currentRow = worksheet.addRow([
+            row.step.code,
+            row.step.label,
+            row.step.content,
+            row.template?.name || "-",
+            row.step.templateType === "bulk" ? "Bulk" : "Personal",
+            row.step.who,
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            row.step.globalLuma,
+        ]);
+        currentRow.alignment = { vertical: "top", wrapText: true };
 
-        const currentRow = worksheet.addRow(rowData);
+        currentRow.eachCell((cell, columnNumber) => {
+            if (columnNumber < 7 || columnNumber > 12) {
+                cell.border = outline;
+            }
+        });
 
-        // Apply conditional formatting for B1-B6 (columns 6 to 11)
-        for (let b = 1; b <= 6; b++) {
-            const cell = currentRow.getCell(b + 5);
-            const status = row.batches[b]?.status;
-            const plannedDate = row.batches[b]?.planned_date;
+        for (let batchNumber = 1; batchNumber <= 6; batchNumber++) {
+            const cell = currentRow.getCell(batchNumber + 6);
+            const batchStatus = row.batches[batchNumber];
+            const plannedDate = batchStatus?.planned_date;
 
-            // Center align the status
+            cell.border = outline;
             cell.alignment = { vertical: "middle", horizontal: "center", wrapText: true };
 
             if (!plannedDate) {
+                cell.value = "-";
                 cell.fill = {
                     type: "pattern",
                     pattern: "solid",
                     fgColor: { argb: "FFF9FAFB" },
                 };
                 cell.font = { color: { argb: "FF9CA3AF" } };
-                cell.value = "—";
                 continue;
             }
 
-            const plannedDateLabel = formatLongDate(plannedDate);
+            cell.value = formatLongDate(plannedDate);
 
-            if (status === "done") {
-                // Green background for done
+            if (batchStatus.status === "done") {
                 cell.fill = {
                     type: "pattern",
                     pattern: "solid",
-                    fgColor: { argb: "FFC6F6D5" }, // Light green, tailwind green-light-7 approx
+                    fgColor: { argb: "FFC6F6D5" },
                 };
-                cell.font = { color: { argb: "FF047857" }, bold: true }; // Darker green text
-                cell.value = `${plannedDateLabel}\n✓ Done`;
-            } else if (status === "skipped") {
+                cell.font = { color: { argb: "FF047857" }, bold: true };
+                if (batchStatus.auto_detected) {
+                    cell.note = "Auto-detected";
+                }
+                continue;
+            }
+
+            if (batchStatus.status === "skipped") {
                 cell.fill = {
                     type: "pattern",
                     pattern: "solid",
-                    fgColor: { argb: "FFF3F4F6" }, // Gray
+                    fgColor: { argb: "FFF3F4F6" },
                 };
                 cell.font = { color: { argb: "FF6B7280" } };
-                cell.value = `${plannedDateLabel}\n⏭ Skipped`;
-            } else {
-                // pending
-                const endDate = new Date(`${plannedDate}T23:59:59.999Z`);
-                const isMissed = now > endDate;
+                continue;
+            }
 
-                if (isMissed) {
-                    // Red background for missed deadline
-                    cell.fill = {
-                        type: "pattern",
-                        pattern: "solid",
-                        fgColor: { argb: "FFFEE2E2" }, // Light red
-                    };
-                    cell.font = { color: { argb: "FFB91C1C" }, bold: true }; // Dark red text
-                    cell.value = `${plannedDateLabel}\n○ Missed`;
-                } else {
-                    // Normal pending
-                    cell.font = { color: { argb: "FF9CA3AF" } };
-                    cell.value = `${plannedDateLabel}\n○ Pending`;
-                }
+            const endDate = new Date(`${plannedDate}T23:59:59.999Z`);
+            const isMissed = now > endDate;
+
+            if (isMissed) {
+                cell.fill = {
+                    type: "pattern",
+                    pattern: "solid",
+                    fgColor: { argb: "FFFEE2E2" },
+                };
+                cell.font = { color: { argb: "FFB91C1C" }, bold: true };
+            } else {
+                cell.font = { color: { argb: "FF111827" } };
             }
         }
     });
 
-    // Auto-filter for easy sorting
     worksheet.autoFilter = {
-        from: { row: 1, column: 1 },
-        to: { row: 1, column: 11 }
+        from: { row: planHeaderRow.number, column: 1 },
+        to: { row: planHeaderRow.number, column: 13 },
     };
+    worksheet.views = [{ state: "frozen", ySplit: planHeaderRow.number }];
 
-    // Write to buffer
     const buffer = await workbook.xlsx.writeBuffer();
 
-    // Set headers
-    c.header('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
-    c.header('Content-Disposition', 'attachment; filename="comms-plan.xlsx"');
+    c.header("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+    c.header("Content-Disposition", 'attachment; filename="comms-plan.xlsx"');
 
     return c.body(buffer as any);
 });
-
-function formatShortDate(date: string): string {
-    return new Date(`${date}T00:00:00Z`).toLocaleDateString("en-US", {
-        month: "short",
-        day: "numeric",
-    });
-}
 
 function formatLongDate(date: string): string {
     return new Date(`${date}T00:00:00Z`).toLocaleDateString("en-US", {
