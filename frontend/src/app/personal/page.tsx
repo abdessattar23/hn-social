@@ -348,7 +348,7 @@ export default function PersonalPage() {
                                                     {isSelected && '✓'}
                                                 </span>
                                                 {ab.label}
-                                                <span className="text-dark-5 text-xs ml-auto">
+                                                <span className="text-dark-5 text-xs ml-auto" title="Application deadline - comms decision">
                                                     {new Date(ab.applicationStart).toLocaleDateString('en-GB', { day: '2-digit', month: 'short' })} – {new Date(ab.commsDeadline).toLocaleDateString('en-GB', { day: '2-digit', month: 'short' })}
                                                 </span>
                                             </button>

@@ -469,10 +469,10 @@ interface AdmissionBatch {
 
 const ADMISSION_BATCHES: readonly AdmissionBatch[] = [
     { number: 1, label: "Batch 1", applicationStart: "2026-02-20", commsDeadline: "2026-02-27" },
-    { number: 2, label: "Batch 2", applicationStart: "2026-03-06", commsDeadline: "2026-03-15" },
-    { number: 3, label: "Batch 3", applicationStart: "2026-03-15", commsDeadline: "2026-03-25" },
-    { number: 4, label: "Batch 4", applicationStart: "2026-03-25", commsDeadline: "2026-04-04" },
-    { number: 5, label: "Batch 5", applicationStart: "2026-04-01", commsDeadline: "2026-04-18" },
+    { number: 2, label: "Batch 2", applicationStart: "2026-03-06", commsDeadline: "2026-03-13" },
+    { number: 3, label: "Batch 3", applicationStart: "2026-03-18", commsDeadline: "2026-03-25" },
+    { number: 4, label: "Batch 4", applicationStart: "2026-03-28", commsDeadline: "2026-04-04" },
+    { number: 5, label: "Batch 5", applicationStart: "2026-04-11", commsDeadline: "2026-04-18" },
     { number: 6, label: "Batch 6", applicationStart: "2026-04-17", commsDeadline: "2026-04-19" },
 ];
 

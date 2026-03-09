@@ -29,7 +29,10 @@ commsPlanRouter.patch("/:stepKey/:batchNumber", async (c) => {
         throw new BadRequestError("Batch number must be a valid integer");
     }
 
-    const body = await c.req.json<{ status?: string }>().catch(() => ({}));
+    let body: { status?: string } = {};
+    try {
+        body = await c.req.json<{ status?: string }>();
+    } catch { }
     const status = (body.status ?? "done") as string;
 
     if (!VALID_STATUSES.includes(status as StepStatusValue)) {
@@ -50,6 +53,7 @@ commsPlanRouter.patch("/:stepKey/:batchNumber", async (c) => {
 commsPlanRouter.get("/export/excel", async (c) => {
     const user = resolveUserContext(c);
     const plan = await commsPlan.getFullPlan(user.orgId);
+    const batchWindows = commsPlan.listBatchCommunicationWindows();
 
     // Use dynamic import for exceljs to avoid loading it if not used
     const ExcelJS = await import("exceljs");
@@ -63,56 +67,34 @@ commsPlanRouter.get("/export/excel", async (c) => {
 
     // Define columns
     worksheet.columns = [
-        { header: "Order", key: "order", width: 8 },
+        { header: "#", key: "stepCode", width: 8 },
         { header: "Step", key: "stepLabel", width: 25 },
         { header: "Content", key: "content", width: 45 },
         { header: "Type", key: "type", width: 15 },
         { header: "Who", key: "who", width: 25 },
-        { header: "B1", key: "b1", width: 8 },
-        { header: "B2", key: "b2", width: 8 },
-        { header: "B3", key: "b3", width: 8 },
-        { header: "B4", key: "b4", width: 8 },
-        { header: "B5", key: "b5", width: 8 },
-        { header: "B6", key: "b6", width: 8 },
+        ...batchWindows.map((batch) => ({
+            header: batch.startDate && batch.endDate
+                ? `B${batch.number}\n${formatShortDate(batch.startDate)} - ${formatShortDate(batch.endDate)}`
+                : `B${batch.number}`,
+            key: `b${batch.number}`,
+            width: 16,
+        })),
     ];
 
     // Style header row
     worksheet.getRow(1).font = { bold: true };
-    worksheet.getRow(1).alignment = { vertical: "middle", horizontal: "center" };
-    worksheet.getRow(1).height = 25;
-
-    // Batch end dates for determining missed deadlines
-    // Dates from the UI: 
-    // B1: Feb 27, 2026
-    // B2: Mar 15, 2026
-    // B3: Mar 25, 2026
-    // B4: Apr 4, 2026
-    // B5: Apr 18, 2026
-    // B6: Apr 19, 2026
-    const batchEndDates: Record<number, Date> = {
-        1: new Date("2026-02-27T23:59:59Z"),
-        2: new Date("2026-03-15T23:59:59Z"),
-        3: new Date("2026-03-25T23:59:59Z"),
-        4: new Date("2026-04-04T23:59:59Z"),
-        5: new Date("2026-04-18T23:59:59Z"),
-        6: new Date("2026-04-19T23:59:59Z"),
-    };
+    worksheet.getRow(1).alignment = { vertical: "middle", horizontal: "center", wrapText: true };
+    worksheet.getRow(1).height = 36;
     const now = new Date();
 
     // Populate rows
     plan.forEach((row) => {
         const rowData = {
-            order: row.step.order,
+            stepCode: row.step.code,
             stepLabel: row.step.label,
             content: row.step.content,
             type: row.step.templateType === "bulk" ? "Bulk" : "Personal",
             who: row.step.who,
-            b1: row.batches[1]?.status || "pending",
-            b2: row.batches[2]?.status || "pending",
-            b3: row.batches[3]?.status || "pending",
-            b4: row.batches[4]?.status || "pending",
-            b5: row.batches[5]?.status || "pending",
-            b6: row.batches[6]?.status || "pending",
         };
 
         const currentRow = worksheet.addRow(rowData);
@@ -121,9 +103,23 @@ commsPlanRouter.get("/export/excel", async (c) => {
         for (let b = 1; b <= 6; b++) {
             const cell = currentRow.getCell(b + 5);
             const status = row.batches[b]?.status;
+            const plannedDate = row.batches[b]?.planned_date;
 
             // Center align the status
-            cell.alignment = { vertical: "middle", horizontal: "center" };
+            cell.alignment = { vertical: "middle", horizontal: "center", wrapText: true };
+
+            if (!plannedDate) {
+                cell.fill = {
+                    type: "pattern",
+                    pattern: "solid",
+                    fgColor: { argb: "FFF9FAFB" },
+                };
+                cell.font = { color: { argb: "FF9CA3AF" } };
+                cell.value = "—";
+                continue;
+            }
+
+            const plannedDateLabel = formatLongDate(plannedDate);
 
             if (status === "done") {
                 // Green background for done
@@ -133,7 +129,7 @@ commsPlanRouter.get("/export/excel", async (c) => {
                     fgColor: { argb: "FFC6F6D5" }, // Light green, tailwind green-light-7 approx
                 };
                 cell.font = { color: { argb: "FF047857" }, bold: true }; // Darker green text
-                cell.value = "✓ Done";
+                cell.value = `${plannedDateLabel}\n✓ Done`;
             } else if (status === "skipped") {
                 cell.fill = {
                     type: "pattern",
@@ -141,11 +137,11 @@ commsPlanRouter.get("/export/excel", async (c) => {
                     fgColor: { argb: "FFF3F4F6" }, // Gray
                 };
                 cell.font = { color: { argb: "FF6B7280" } };
-                cell.value = "⏭ Skipped";
+                cell.value = `${plannedDateLabel}\n⏭ Skipped`;
             } else {
                 // pending
-                const endDate = batchEndDates[b];
-                const isMissed = endDate && now > endDate;
+                const endDate = new Date(`${plannedDate}T23:59:59.999Z`);
+                const isMissed = now > endDate;
 
                 if (isMissed) {
                     // Red background for missed deadline
@@ -155,11 +151,11 @@ commsPlanRouter.get("/export/excel", async (c) => {
                         fgColor: { argb: "FFFEE2E2" }, // Light red
                     };
                     cell.font = { color: { argb: "FFB91C1C" }, bold: true }; // Dark red text
-                    cell.value = "○ Missed";
+                    cell.value = `${plannedDateLabel}\n○ Missed`;
                 } else {
                     // Normal pending
                     cell.font = { color: { argb: "FF9CA3AF" } };
-                    cell.value = "○ Pending";
+                    cell.value = `${plannedDateLabel}\n○ Pending`;
                 }
             }
         }
@@ -180,5 +176,20 @@ commsPlanRouter.get("/export/excel", async (c) => {
 
     return c.body(buffer as any);
 });
+
+function formatShortDate(date: string): string {
+    return new Date(`${date}T00:00:00Z`).toLocaleDateString("en-US", {
+        month: "short",
+        day: "numeric",
+    });
+}
+
+function formatLongDate(date: string): string {
+    return new Date(`${date}T00:00:00Z`).toLocaleDateString("en-US", {
+        month: "short",
+        day: "numeric",
+        year: "numeric",
+    });
+}
 
 export default commsPlanRouter;

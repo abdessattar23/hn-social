@@ -7,6 +7,7 @@ import { motion } from 'framer-motion';
 import { Download, Loader2 } from 'lucide-react';
 
 interface JourneyStep {
+    code: string;
     key: string;
     order: number;
     label: string;
@@ -19,6 +20,7 @@ interface StepStatus {
     step_key: string;
     batch_number: number;
     status: 'pending' | 'done' | 'skipped';
+    planned_date: string | null;
     completed_at: string | null;
     completed_by: string | null;
     notes: string | null;
@@ -30,27 +32,39 @@ interface CommsPlanRow {
     batches: Record<number, StepStatus>;
 }
 
-interface AdmissionBatch {
-    number: number;
-    label: string;
-    applicationStart: string;
-    commsDeadline: string;
-}
-
 interface BatchLabel {
     number: number;
     label: string;
-    dates: string;
+    timeframe: string;
 }
 
-function formatBatchLabel(b: AdmissionBatch): BatchLabel {
-    const fmt = (iso: string) =>
-        new Date(iso + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
-    return {
-        number: b.number,
-        label: `B${b.number}`,
-        dates: `${fmt(b.applicationStart)} \u2013 ${fmt(b.commsDeadline)}`,
-    };
+const BATCH_NUMBERS = [1, 2, 3, 4, 5, 6] as const;
+
+function formatShortDate(iso: string) {
+    return new Date(`${iso}T00:00:00`).toLocaleDateString('en-US', {
+        month: 'short',
+        day: 'numeric',
+    });
+}
+
+function buildBatchLabels(plan: CommsPlanRow[]): BatchLabel[] {
+    return BATCH_NUMBERS.map((number) => {
+        const dates = plan
+            .map((row) => row.batches[number]?.planned_date)
+            .filter((date): date is string => Boolean(date))
+            .sort();
+
+        const start = dates[0];
+        const end = dates[dates.length - 1];
+
+        return {
+            number,
+            label: `B${number}`,
+            timeframe: start && end
+                ? `${formatShortDate(start)} \u2013 ${formatShortDate(end)}`
+                : 'No schedule',
+        };
+    });
 }
 
 const statusStyles: Record<string, { bg: string; text: string; icon: string; label: string }> = {
@@ -80,13 +94,11 @@ export default function CommsPlanPage() {
     const [exporting, setExporting] = useState(false);
 
     const load = useCallback(() => {
-        Promise.all([
-            api.get('/comms-plan') as Promise<CommsPlanRow[]>,
-            api.get('/personal-messages/admission-batches') as Promise<AdmissionBatch[]>,
-        ])
-            .then(([planData, batches]) => {
-                setPlan(planData || []);
-                setBatchLabels((batches || []).map(formatBatchLabel));
+        (api.get('/comms-plan') as Promise<CommsPlanRow[]>)
+            .then((planData) => {
+                const rows = planData || [];
+                setPlan(rows);
+                setBatchLabels(buildBatchLabels(rows));
                 setLoading(false);
             })
             .catch((err: Error) => { setError(err.message || 'Failed to load'); setLoading(false); });
@@ -147,13 +159,14 @@ export default function CommsPlanPage() {
     };
 
     // Compute progress stats
-    const batchCount = batchLabels.length || 6;
-    const totalCells = plan.length * batchCount;
+    const totalCells = plan.reduce((acc, row) => {
+        return acc + Object.values(row.batches).filter((cell) => cell.planned_date).length;
+    }, 0);
     const doneCells = plan.reduce((acc, row) => {
-        return acc + Object.values(row.batches).filter((b) => b.status === 'done').length;
+        return acc + Object.values(row.batches).filter((b) => b.planned_date && b.status === 'done').length;
     }, 0);
     const skippedCells = plan.reduce((acc, row) => {
-        return acc + Object.values(row.batches).filter((b) => b.status === 'skipped').length;
+        return acc + Object.values(row.batches).filter((b) => b.planned_date && b.status === 'skipped').length;
     }, 0);
     const completedPercent = totalCells > 0 ? Math.round(((doneCells + skippedCells) / totalCells) * 100) : 0;
 
@@ -227,6 +240,10 @@ export default function CommsPlanPage() {
                     <span className="w-6 h-6 rounded-lg bg-green-light-7 border-2 border-primary/40 flex items-center justify-center text-green font-bold text-[10px]">⚡</span>
                     Auto-detected
                 </span>
+                <span className="flex items-center gap-1.5">
+                    <span className="w-6 h-6 rounded-lg bg-surface-2/60 flex items-center justify-center text-dark-6">—</span>
+                    Not scheduled
+                </span>
                 <button
                     onClick={load}
                     className="ml-auto text-primary hover:text-accent text-xs font-medium transition-colors flex items-center gap-1"
@@ -258,21 +275,22 @@ export default function CommsPlanPage() {
                                     {batchLabels.map((b) => (
                                         <th key={b.number} className="text-center px-2 py-3 text-dark-5 font-medium text-xs uppercase tracking-wider w-16">
                                             <div>{b.label}</div>
-                                            <div className="text-[10px] font-normal normal-case text-dark-6 mt-0.5">{b.dates.split('–')[0].trim()}</div>
+                                            <div className="text-[10px] font-normal normal-case text-dark-6 mt-0.5">{b.timeframe}</div>
                                         </th>
                                     ))}
                                 </tr>
                             </thead>
                             <tbody>
-                                {plan.map((row, i) => {
-                                    const rowDone = Object.values(row.batches).filter((b) => b.status === 'done' || b.status === 'skipped').length;
-                                    const isRowComplete = rowDone === batchCount;
+                                {plan.map((row) => {
+                                    const rowApplicable = Object.values(row.batches).filter((b) => b.planned_date).length;
+                                    const rowDone = Object.values(row.batches).filter((b) => b.planned_date && (b.status === 'done' || b.status === 'skipped')).length;
+                                    const isRowComplete = rowApplicable > 0 && rowDone === rowApplicable;
                                     return (
                                         <tr
                                             key={row.step.key}
                                             className={`border-t border-stroke/30 transition-colors hover:bg-surface-2/30 ${isRowComplete ? 'opacity-60' : ''}`}
                                         >
-                                            <td className="px-4 py-3 text-dark-5 text-xs font-mono">{row.step.order}</td>
+                                            <td className="px-4 py-3 text-dark-5 text-xs font-mono">{row.step.code}</td>
                                             <td className="px-4 py-3">
                                                 <span className="font-medium text-dark">{row.step.label}</span>
                                             </td>
@@ -287,8 +305,26 @@ export default function CommsPlanPage() {
                                             <td className="px-4 py-3 text-dark-5 text-xs hidden xl:table-cell">{row.step.who}</td>
                                             {batchLabels.map((b) => {
                                                 const cell = row.batches[b.number];
+                                                if (!cell.planned_date) {
+                                                    return (
+                                                        <td key={b.number} className="px-2 py-3 text-center">
+                                                            <div
+                                                                className="w-8 h-8 rounded-lg bg-surface-2/60 text-dark-6 text-sm flex items-center justify-center mx-auto"
+                                                                title="Not scheduled for this batch"
+                                                            >
+                                                                —
+                                                            </div>
+                                                        </td>
+                                                    );
+                                                }
+
                                                 const st = statusStyles[cell.status] || statusStyles.pending;
                                                 const isToggling = toggling === `${row.step.key}:${b.number}`;
+                                                const plannedDateLabel = new Date(`${cell.planned_date}T00:00:00`).toLocaleDateString('en-US', {
+                                                    month: 'short',
+                                                    day: 'numeric',
+                                                    year: 'numeric',
+                                                });
                                                 return (
                                                     <td key={b.number} className="px-2 py-3 text-center">
                                                         <motion.button
@@ -297,7 +333,7 @@ export default function CommsPlanPage() {
                                                             onClick={() => toggle(row.step.key, b.number, cell.status)}
                                                             disabled={isToggling}
                                                             className={`w-8 h-8 rounded-lg ${st.bg} ${st.text} font-bold text-sm flex items-center justify-center mx-auto transition-all ${isToggling ? 'opacity-50' : 'cursor-pointer hover:shadow-md'} ${cell.auto_detected ? 'ring-2 ring-primary/40' : ''}`}
-                                                            title={`${st.label}${cell.auto_detected ? ' (auto-detected)' : ''} — Click to change`}
+                                                            title={`${plannedDateLabel} — ${st.label}${cell.auto_detected ? ' (auto-detected)' : ''} — Click to change`}
                                                         >
                                                             {cell.auto_detected && cell.status === 'done' ? '⚡' : st.icon}
                                                         </motion.button>
@@ -316,9 +352,12 @@ export default function CommsPlanPage() {
             {/* Per-Step Summary Cards */}
             <div className="mt-6 grid grid-cols-2 md:grid-cols-3 xl:grid-cols-5 gap-3">
                 {plan.map((row) => {
-                    const doneBatches = Object.values(row.batches).filter((b) => b.status === 'done').length;
-                    const skippedBatches = Object.values(row.batches).filter((b) => b.status === 'skipped').length;
-                    const stepProgress = Math.round(((doneBatches + skippedBatches) / batchCount) * 100);
+                    const applicableBatches = Object.values(row.batches).filter((b) => b.planned_date).length;
+                    const doneBatches = Object.values(row.batches).filter((b) => b.planned_date && b.status === 'done').length;
+                    const skippedBatches = Object.values(row.batches).filter((b) => b.planned_date && b.status === 'skipped').length;
+                    const stepProgress = applicableBatches > 0
+                        ? Math.round(((doneBatches + skippedBatches) / applicableBatches) * 100)
+                        : 0;
                     return (
                         <motion.div
                             key={row.step.key}
@@ -342,7 +381,13 @@ export default function CommsPlanPage() {
                             <div className="flex gap-1 mt-2">
                                 {batchLabels.map((b) => {
                                     const cell = row.batches[b.number];
-                                    const color = cell.status === 'done' ? 'bg-green' : cell.status === 'skipped' ? 'bg-dark-5' : 'bg-surface-2';
+                                    const color = !cell.planned_date
+                                        ? 'bg-surface-2/40'
+                                        : cell.status === 'done'
+                                            ? 'bg-green'
+                                            : cell.status === 'skipped'
+                                                ? 'bg-dark-5'
+                                                : 'bg-surface-2';
                                     return <div key={b.number} className={`flex-1 h-1 rounded-full ${color}`} />;
                                 })}
                             </div>

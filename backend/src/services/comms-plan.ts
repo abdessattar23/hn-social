@@ -4,6 +4,7 @@ import { BadRequestError } from "../lib/errors";
 // ── Journey Steps Configuration ────────────────────────────────────────
 
 export interface JourneyStep {
+    code: string;
     key: string;
     order: number;
     label: string;
@@ -12,23 +13,144 @@ export interface JourneyStep {
     who: string;
 }
 
+export const BATCH_NUMBERS = [1, 2, 3, 4, 5, 6] as const;
+export type BatchNumber = (typeof BATCH_NUMBERS)[number];
+
 export const JOURNEY_STEPS: readonly JourneyStep[] = [
-    { key: "accepted", order: 1, label: "Accepted", content: "Information about Status - Accepted + Referral Link", templateType: "bulk", who: "All pre-accepted" },
-    { key: "rejected", order: 2, label: "Rejected", content: "Information about Status - Rejected", templateType: "bulk", who: "All pre-rejected" },
-    { key: "waitlist", order: 3, label: "Waitlist", content: "Ask Open - Waitlisted Main Grands", templateType: "personal", who: "All pre-rejected" },
-    { key: "symposium", order: 4, label: "Symposium", content: "Sign up code for platform, ask to register for hub and event bars", templateType: "personal", who: "All accepted" },
-    { key: "speaker", order: 5, label: "Speaker", content: "Announce speakers + Referral Link", templateType: "bulk", who: "All accepted" },
-    { key: "sponsors", order: 6, label: "Sponsors", content: "Announce sponsors", templateType: "bulk", who: "All accepted" },
-    { key: "no_hub_confirm", order: 7, label: "No Hub Confirm", content: "Invitation to your hub", templateType: "personal", who: "All accepted_budgets" },
-    { key: "hub_waitlist", order: 8, label: "Hub Waitlist", content: "Info that you've been waitlisted", templateType: "bulk", who: "All accepted_maybe" },
-    { key: "hub_waitlist_confirm", order: 9, label: "Hub Waitlist Confirm", content: "Info that you've been accepted off waitlist", templateType: "personal", who: "All accepted_maybe" },
-    { key: "last_info_mail", order: 10, label: "Last Info Mail", content: "Last info mail about zoom, discord etc.", templateType: "bulk", who: "All accepted" },
-    { key: "sequel_hour", order: 11, label: "Sequel/Hour", content: "Reminder to join zoom in one hour", templateType: "bulk", who: "All accepted" },
-    { key: "deadline", order: 12, label: "Deadline", content: "Deadline reminder", templateType: "bulk", who: "All accepted" },
-    { key: "comeback2", order: 13, label: "Comeback", content: "Reminder to come back to the pitches", templateType: "bulk", who: "All accepted" },
-    { key: "thank_you", order: 14, label: "Thank You", content: "Thank you and feedback survey + social", templateType: "bulk", who: "All accepted" },
-    { key: "prizes", order: 15, label: "Prizes", content: "Collect info for prize money", templateType: "personal", who: "All accepted, Winners" },
+    { code: "1a", key: "accepted", order: 1, label: "Accepted", content: "Information about Status - Accepted + Referral Link", templateType: "bulk", who: "All pre-accepted" },
+    { code: "1b", key: "rejected", order: 2, label: "Rejected", content: "Information about Status - Rejected", templateType: "bulk", who: "All pre-rejected" },
+    { code: "2", key: "waitlist", order: 3, label: "Whitelist", content: "Anti-Spam - Whitelist Main-Emails", templateType: "personal", who: "All pre-accepted" },
+    { code: "3", key: "symposium", order: 4, label: "Signupcode", content: "Sign-up code for platform, ask to register for hub and select team", templateType: "personal", who: "All accepted" },
+    { code: "4", key: "speaker", order: 5, label: "Speaker", content: "Announce speakers + Referral Link", templateType: "bulk", who: "All accepted" },
+    { code: "5", key: "sponsors", order: 6, label: "Sponsors", content: "Announce sponsors", templateType: "bulk", who: "All accepted" },
+    { code: "6a", key: "no_hub_confirm", order: 7, label: "Hub Confirm", content: "Invitation to your hub", templateType: "personal", who: "All accepted_hubprio" },
+    { code: "6b", key: "hub_waitlist", order: 8, label: "Hub Waitlist", content: "Info that you've been waitlisted", templateType: "bulk", who: "All accepted_noprio" },
+    { code: "7", key: "hub_waitlist_confirm", order: 9, label: "Hub Waitlist Confirm", content: "Info that you've been accepted off waitlist", templateType: "personal", who: "All accepted_noprio" },
+    { code: "8", key: "last_info_mail", order: 10, label: "Last Info Mail", content: "Last info mail about zoom, discord etc.", templateType: "bulk", who: "All accepted" },
+    { code: "9", key: "sequel_hour", order: 11, label: "See You In 1 Hour", content: "Reminder to join zoom in one hour", templateType: "bulk", who: "All accepted" },
+    { code: "10", key: "deadline", order: 12, label: "Deadline", content: "Deadline reminder", templateType: "bulk", who: "All accepted" },
+    { code: "11", key: "comeback2", order: 13, label: "Comeback at 2", content: "Reminder to come back to the pitches", templateType: "bulk", who: "All accepted" },
+    { code: "12", key: "thank_you", order: 14, label: "Thank you", content: "Thank you and feedback survey + social", templateType: "bulk", who: "All accepted" },
+    { code: "13", key: "prizes", order: 15, label: "Prizes", content: "Collect info for prize money", templateType: "personal", who: "All accepted_Winners" },
 ];
+
+type StepScheduleMatrix = Record<JourneyStep["key"], Partial<Record<BatchNumber, string>>>;
+
+const STEP_SCHEDULES: StepScheduleMatrix = {
+    accepted: {
+        1: "2026-02-27",
+        2: "2026-03-13",
+        3: "2026-03-25",
+        4: "2026-04-04",
+        5: "2026-04-18",
+        6: "2026-04-19",
+    },
+    rejected: {
+        1: "2026-02-27",
+        2: "2026-03-13",
+        3: "2026-03-25",
+        4: "2026-04-04",
+        5: "2026-04-18",
+        6: "2026-04-19",
+    },
+    waitlist: {
+        1: "2026-02-27",
+        2: "2026-03-13",
+        3: "2026-03-25",
+        4: "2026-04-04",
+        5: "2026-04-18",
+        6: "2026-04-19",
+    },
+    symposium: {
+        1: "2026-03-04",
+        2: "2026-03-18",
+        3: "2026-03-30",
+        4: "2026-04-09",
+        5: "2026-04-18",
+        6: "2026-04-19",
+    },
+    speaker: {
+        1: "2026-03-14",
+        2: "2026-03-28",
+        3: "2026-04-09",
+        4: "2026-04-19",
+    },
+    sponsors: {
+        1: "2026-03-24",
+        2: "2026-04-07",
+        3: "2026-04-19",
+    },
+    no_hub_confirm: {
+        1: "2026-04-10",
+        2: "2026-04-10",
+        3: "2026-04-10",
+        4: "2026-04-10",
+    },
+    hub_waitlist: {
+        1: "2026-04-10",
+        2: "2026-04-10",
+        3: "2026-04-10",
+        4: "2026-04-10",
+        5: "2026-04-18",
+        6: "2026-04-19",
+    },
+    hub_waitlist_confirm: {
+        1: "2026-04-20",
+        2: "2026-04-20",
+        3: "2026-04-20",
+        4: "2026-04-20",
+        5: "2026-04-20",
+        6: "2026-04-20",
+    },
+    last_info_mail: {
+        1: "2026-04-22",
+        2: "2026-04-22",
+        3: "2026-04-22",
+        4: "2026-04-22",
+        5: "2026-04-22",
+        6: "2026-04-22",
+    },
+    sequel_hour: {
+        1: "2026-04-24",
+        2: "2026-04-24",
+        3: "2026-04-24",
+        4: "2026-04-24",
+        5: "2026-04-24",
+        6: "2026-04-24",
+    },
+    deadline: {
+        1: "2026-04-26",
+        2: "2026-04-26",
+        3: "2026-04-26",
+        4: "2026-04-26",
+        5: "2026-04-26",
+        6: "2026-04-26",
+    },
+    comeback2: {
+        1: "2026-04-26",
+        2: "2026-04-26",
+        3: "2026-04-26",
+        4: "2026-04-26",
+        5: "2026-04-26",
+        6: "2026-04-26",
+    },
+    thank_you: {
+        1: "2026-04-26",
+        2: "2026-04-26",
+        3: "2026-04-26",
+        4: "2026-04-26",
+        5: "2026-04-26",
+        6: "2026-04-26",
+    },
+    prizes: {
+        1: "2026-04-26",
+        2: "2026-04-26",
+        3: "2026-04-26",
+        4: "2026-04-26",
+        5: "2026-04-26",
+        6: "2026-04-26",
+    },
+};
 
 // ── Types ──────────────────────────────────────────────────────────────
 
@@ -36,6 +158,7 @@ export interface StepStatus {
     step_key: string;
     batch_number: number;
     status: "pending" | "done" | "skipped";
+    planned_date: string | null;
     completed_at: string | null;
     completed_by: string | null;
     notes: string | null;
@@ -55,6 +178,12 @@ interface CommsStepRow {
     completed_at: string | null;
     completed_by: string | null;
     notes: string | null;
+}
+
+export interface BatchCommunicationWindow {
+    number: BatchNumber;
+    startDate: string | null;
+    endDate: string | null;
 }
 
 // ── Auto-Detection ─────────────────────────────────────────────────────
@@ -97,6 +226,28 @@ async function getAutoDetectedSteps(orgId: number): Promise<Map<string, Set<numb
     return detected;
 }
 
+export function getPlannedDate(
+    stepKey: JourneyStep["key"],
+    batchNumber: BatchNumber,
+): string | null {
+    return STEP_SCHEDULES[stepKey]?.[batchNumber] ?? null;
+}
+
+export function listBatchCommunicationWindows(): BatchCommunicationWindow[] {
+    return BATCH_NUMBERS.map((batchNumber) => {
+        const dates = JOURNEY_STEPS
+            .map((step) => getPlannedDate(step.key, batchNumber))
+            .filter((date): date is string => Boolean(date))
+            .sort();
+
+        return {
+            number: batchNumber,
+            startDate: dates[0] ?? null,
+            endDate: dates[dates.length - 1] ?? null,
+        };
+    });
+}
+
 // ── Service Functions ──────────────────────────────────────────────────
 
 export async function getFullPlan(orgId: number): Promise<CommsPlanRow[]> {
@@ -115,14 +266,17 @@ export async function getFullPlan(orgId: number): Promise<CommsPlanRow[]> {
 
     return JOURNEY_STEPS.map((step) => {
         const batches: Record<number, StepStatus> = {};
-        for (let b = 1; b <= 6; b++) {
+        for (const b of BATCH_NUMBERS) {
             const key = `${step.key}:${b}`;
             const manual = statusMap.get(key);
-            const isAutoDetected = autoDetected.get(step.key)?.has(b) ?? false;
+            const plannedDate = getPlannedDate(step.key, b);
+            const isAutoDetected =
+                plannedDate !== null && (autoDetected.get(step.key)?.has(b) ?? false);
 
             batches[b] = {
                 step_key: step.key,
                 batch_number: b,
+                planned_date: plannedDate,
                 status: manual?.status || (isAutoDetected ? "done" : "pending"),
                 completed_at: manual?.completed_at || null,
                 completed_by: manual?.completed_by || null,
@@ -144,8 +298,11 @@ export async function toggleStep(
     if (!JOURNEY_STEPS.find((s) => s.key === stepKey)) {
         throw new BadRequestError(`Unknown step key: ${stepKey}`);
     }
-    if (batchNumber < 1 || batchNumber > 6) {
+    if (!BATCH_NUMBERS.includes(batchNumber as BatchNumber)) {
         throw new BadRequestError("Batch number must be between 1 and 6");
+    }
+    if (!getPlannedDate(stepKey as JourneyStep["key"], batchNumber as BatchNumber)) {
+        throw new BadRequestError(`Step '${stepKey}' does not apply to batch ${batchNumber}`);
     }
 
     if (status === "pending") {
