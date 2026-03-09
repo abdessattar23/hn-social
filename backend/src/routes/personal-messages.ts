@@ -80,6 +80,27 @@ personalMessagesRouter.patch("/:id/subject", async (c) => {
     return c.json(result);
 });
 
+personalMessagesRouter.post("/:id/attachments", async (c) => {
+    const user = resolveUserContext(c);
+    const id = extractNumericParam(c);
+    const formData = await c.req.formData();
+    const file = formData.get("file");
+    if (!(file instanceof File)) {
+        throw new BadRequestError("File is required");
+    }
+
+    const batch = await service.addAttachment(id, user.orgId, file);
+    return c.json(batch);
+});
+
+personalMessagesRouter.delete("/:id/attachments/:filename", async (c) => {
+    const user = resolveUserContext(c);
+    const id = extractNumericParam(c);
+    const filename = c.req.param("filename");
+    const batch = await service.removeAttachment(id, user.orgId, filename);
+    return c.json(batch);
+});
+
 // Import CSV into a batch
 personalMessagesRouter.post("/:id/import-csv", async (c) => {
     const user = resolveUserContext(c);

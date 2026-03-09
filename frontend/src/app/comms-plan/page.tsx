@@ -4,6 +4,7 @@ import { api } from '@/lib/api';
 import { useRequireAuth } from '@/lib/useRequireAuth';
 import { AnimatedPage } from '@/components/motion';
 import { motion } from 'framer-motion';
+import { Download, Loader2 } from 'lucide-react';
 
 interface JourneyStep {
     key: string;
@@ -76,6 +77,7 @@ export default function CommsPlanPage() {
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState('');
     const [toggling, setToggling] = useState<string | null>(null);
+    const [exporting, setExporting] = useState(false);
 
     const load = useCallback(() => {
         Promise.all([
@@ -125,6 +127,34 @@ export default function CommsPlanPage() {
         }
     };
 
+    const exportExcel = async () => {
+        try {
+            setExporting(true);
+            const token = localStorage.getItem('auth_token');
+            const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001'}/api/comms-plan/export/excel`, {
+                headers: {
+                    'Authorization': `Bearer ${token}`
+                }
+            });
+
+            if (!res.ok) throw new Error('Failed to export Excel');
+
+            const blob = await res.blob();
+            const url = window.URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `Comms_Plan_${new Date().toISOString().split('T')[0]}.xlsx`;
+            document.body.appendChild(a);
+            a.click();
+            window.URL.revokeObjectURL(url);
+            document.body.removeChild(a);
+        } catch (err: any) {
+            setError(err.message || 'Export failed');
+        } finally {
+            setExporting(false);
+        }
+    };
+
     // Compute progress stats
     const batchCount = batchLabels.length || 6;
     const totalCells = plan.length * batchCount;
@@ -140,9 +170,19 @@ export default function CommsPlanPage() {
 
     return (
         <AnimatedPage className="pb-20">
-            <div className="mb-6">
-                <h1 className="text-2xl font-bold text-dark mb-1 tracking-tight">Communication Plan</h1>
-                <p className="text-sm text-dark-5">Track every step of the hackathon communication journey across all batches.</p>
+            <div className="mb-6 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                <div>
+                    <h1 className="text-2xl font-bold text-dark mb-1 tracking-tight">Communication Plan</h1>
+                    <p className="text-sm text-dark-5">Track every step of the hackathon communication journey across all batches.</p>
+                </div>
+                <button
+                    onClick={exportExcel}
+                    disabled={exporting}
+                    className="flex items-center justify-center gap-2 px-4 py-2 bg-primary text-white text-sm font-medium rounded-xl hover:bg-primary/90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed shadow-sm shrink-0"
+                >
+                    {exporting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />}
+                    Export to Excel
+                </button>
             </div>
 
             {error && (

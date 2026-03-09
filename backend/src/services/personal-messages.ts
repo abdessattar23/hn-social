@@ -1,5 +1,7 @@
 import { db } from "../db/client";
 import { NotFoundError, BadRequestError } from "../lib/errors";
+import { deleteUpload, saveUpload } from "../lib/upload";
+import type { AssetManifest } from "../lib/upload";
 import * as unipile from "./unipile";
 import * as Papa from "papaparse";
 import { Cron } from "croner";
@@ -58,7 +60,12 @@ interface PersonalMessageBatch {
     failed: number;
     created_at: string;
     sync_target_status: string | null;
+    attachments: AssetManifest[];
 }
+
+type RawPersonalMessageBatch = Omit<PersonalMessageBatch, "attachments"> & {
+    attachments?: unknown;
+};
 
 interface PersonalMessageItem {
     id: number;
@@ -71,6 +78,63 @@ interface PersonalMessageItem {
     error: string | null;
     sent_at: string | null;
     application_id: string | null;
+}
+
+function normalizeAttachments(attachments: unknown): AssetManifest[] {
+    if (!Array.isArray(attachments)) return [];
+
+    return attachments.flatMap((attachment) => {
+        if (!attachment || typeof attachment !== "object") return [];
+
+        const candidate = attachment as Partial<AssetManifest>;
+        if (
+            typeof candidate.filename !== "string" ||
+            typeof candidate.originalName !== "string" ||
+            typeof candidate.path !== "string" ||
+            typeof candidate.mimeType !== "string"
+        ) {
+            return [];
+        }
+
+        return [{
+            filename: candidate.filename,
+            originalName: candidate.originalName,
+            path: candidate.path,
+            mimeType: candidate.mimeType,
+        }];
+    });
+}
+
+function normalizeBatchRecord<T extends { attachments?: unknown }>(
+    batch: T,
+): Omit<T, "attachments"> & { attachments: AssetManifest[] } {
+    const { attachments, ...rest } = batch;
+    return {
+        ...rest,
+        attachments: normalizeAttachments(attachments),
+    };
+}
+
+async function materializeBatchRecord(
+    id: number,
+    orgId: number,
+): Promise<PersonalMessageBatch> {
+    const { data, error } = await db
+        .from("personal_messages")
+        .select("*")
+        .eq("id", id)
+        .eq("org_id", orgId)
+        .single();
+    if (error || !data) throw new NotFoundError("Personal message batch not found");
+    return normalizeBatchRecord(data as RawPersonalMessageBatch);
+}
+
+async function purgeAttachmentAssets(
+    attachments: AssetManifest[],
+): Promise<void> {
+    for (const attachment of attachments) {
+        await deleteUpload(attachment.path);
+    }
 }
 
 // ── CSV Column Detection ───────────────────────────────────────────────
@@ -123,18 +187,13 @@ export async function findAll(orgId: number) {
         .eq("org_id", orgId)
         .order("created_at", { ascending: false });
     if (error) throw new BadRequestError(error.message);
-    return data || [];
+    return (data || []).map((row) =>
+        normalizeBatchRecord(row as RawPersonalMessageBatch),
+    );
 }
 
 export async function findOne(id: number, orgId: number) {
-    const { data, error } = await db
-        .from("personal_messages")
-        .select("*")
-        .eq("id", id)
-        .eq("org_id", orgId)
-        .single();
-    if (error || !data) throw new NotFoundError("Personal message batch not found");
-
+    const batch = await materializeBatchRecord(id, orgId);
     const { data: items, error: itemsErr } = await db
         .from("personal_message_items")
         .select("*")
@@ -142,7 +201,7 @@ export async function findOne(id: number, orgId: number) {
         .order("id", { ascending: true });
     if (itemsErr) throw new BadRequestError(itemsErr.message);
 
-    return { ...data, items: items || [] };
+    return { ...batch, items: items || [] };
 }
 
 export async function create(
@@ -167,21 +226,20 @@ export async function create(
             account_id: data.accountId,
             org_id: orgId,
             user_id: userId,
+            attachments: [],
         })
         .select()
         .single();
     if (error) throw new BadRequestError(error.message);
-    return batch;
+    return normalizeBatchRecord(batch as RawPersonalMessageBatch);
 }
 
 export async function remove(id: number, orgId: number) {
-    const { data, error: findErr } = await db
-        .from("personal_messages")
-        .select("id")
-        .eq("id", id)
-        .eq("org_id", orgId)
-        .single();
-    if (findErr || !data) throw new NotFoundError("Batch not found");
+    const batch = await materializeBatchRecord(id, orgId);
+
+    if (batch.attachments.length > 0) {
+        await purgeAttachmentAssets(batch.attachments);
+    }
 
     // Items cascade-delete via FK
     const { error } = await db
@@ -194,13 +252,7 @@ export async function remove(id: number, orgId: number) {
 
 export async function updateBatchSubject(id: number, subject: string, orgId: number) {
     // Verify batch belongs to org
-    const { data: batch, error: findErr } = await db
-        .from("personal_messages")
-        .select("id")
-        .eq("id", id)
-        .eq("org_id", orgId)
-        .single();
-    if (findErr || !batch) throw new NotFoundError("Batch not found");
+    await materializeBatchRecord(id, orgId);
 
     const { error, count } = await db
         .from("personal_message_items")
@@ -209,6 +261,66 @@ export async function updateBatchSubject(id: number, subject: string, orgId: num
     if (error) throw new BadRequestError(error.message);
 
     return { updated: count, subject };
+}
+
+export async function addAttachment(id: number, orgId: number, file: File) {
+    const batch = await materializeBatchRecord(id, orgId);
+    if (batch.status !== "DRAFT" && batch.status !== "FAILED") {
+        throw new BadRequestError("Attachments can only be changed while the batch is in DRAFT or FAILED");
+    }
+
+    const saved = await saveUpload(file);
+    const attachments = [
+        ...batch.attachments,
+        {
+            filename: saved.filename,
+            originalName: saved.originalName,
+            path: saved.path,
+            mimeType: saved.mimeType,
+        },
+    ];
+
+    const { error } = await db
+        .from("personal_messages")
+        .update({ attachments })
+        .eq("id", id);
+    if (error) {
+        await deleteUpload(saved.path).catch(() => { });
+        throw new BadRequestError(error.message);
+    }
+
+    return findOne(id, orgId);
+}
+
+export async function removeAttachment(
+    id: number,
+    orgId: number,
+    filename: string,
+) {
+    const batch = await materializeBatchRecord(id, orgId);
+    if (batch.status !== "DRAFT" && batch.status !== "FAILED") {
+        throw new BadRequestError("Attachments can only be changed while the batch is in DRAFT or FAILED");
+    }
+
+    const targetAttachment = batch.attachments.find(
+        (attachment) => attachment.filename === filename,
+    );
+    if (!targetAttachment) {
+        return findOne(id, orgId);
+    }
+
+    await deleteUpload(targetAttachment.path);
+
+    const attachments = batch.attachments.filter(
+        (attachment) => attachment.filename !== filename,
+    );
+    const { error } = await db
+        .from("personal_messages")
+        .update({ attachments })
+        .eq("id", id);
+    if (error) throw new BadRequestError(error.message);
+
+    return findOne(id, orgId);
 }
 
 // ── Hackathon Events (date-based) ──────────────────────────────────────
@@ -424,6 +536,7 @@ export async function syncFromApplications(
             org_id: orgId,
             user_id: userId,
             sync_target_status: syncTargetStatus,
+            attachments: [],
         })
         .select()
         .single();
@@ -476,7 +589,11 @@ export async function syncFromApplications(
         count: items.length,
     });
 
-    return { ...batch, total: items.length, itemCount: items.length };
+    return normalizeBatchRecord({
+        ...(batch as RawPersonalMessageBatch),
+        total: items.length,
+        itemCount: items.length,
+    });
 }
 
 // ── CSV Import ─────────────────────────────────────────────────────────
@@ -622,6 +739,7 @@ async function dispatchItem(
     channel: ChannelProtocol,
     accountId: string,
     orgId: number,
+    attachmentPaths: string[],
 ): Promise<{ status: string; error: string | null }> {
     try {
         if (channel === "EMAIL") {
@@ -649,10 +767,15 @@ async function dispatchItem(
                 ],
                 subject: item.subject || "(No Subject)",
                 body,
+                attachmentPaths,
             });
         } else {
             // WHATSAPP / LINKEDIN — identifier is chat_id
-            await unipile.sendChatMessage(item.recipient_identifier, item.message_body);
+            await unipile.sendChatMessage(
+                item.recipient_identifier,
+                item.message_body,
+                attachmentPaths,
+            );
         }
         return { status: "SENT", error: null };
     } catch (err: unknown) {
@@ -695,6 +818,7 @@ export async function send(id: number, orgId: number, delayMinMs?: number, delay
         .eq("id", id);
 
     const channel = (batch.channel || "EMAIL") as ChannelProtocol;
+    const attachmentPaths = batch.attachments.map((attachment) => attachment.path);
     const defaultPolicy = createThrottlePolicy(channel);
     const throttlePolicy = {
         minIntervalMs: delayMinMs ?? defaultPolicy.minIntervalMs,
@@ -762,7 +886,13 @@ export async function send(id: number, orgId: number, delayMinMs?: number, delay
 
             emitLog(id, 'info', `Sending to ${item.recipient_name} (${item.recipient_identifier.substring(0, 12)}...)`);
 
-            const result = await dispatchItem(item, channel, batch.account_id, orgId);
+            const result = await dispatchItem(
+                item,
+                channel,
+                batch.account_id,
+                orgId,
+                attachmentPaths,
+            );
 
             if (result.status === "SENT") {
                 sentCount++;

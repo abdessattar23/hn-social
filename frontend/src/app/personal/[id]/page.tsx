@@ -19,6 +19,12 @@ type Item = {
     application_id: string | null;
 };
 
+type Attachment = {
+    filename: string;
+    originalName: string;
+    mimeType: string;
+};
+
 type Batch = {
     id: number;
     name: string;
@@ -30,7 +36,21 @@ type Batch = {
     failed: number;
     created_at: string;
     sync_target_status: string | null;
+    attachments: Attachment[];
     items: Item[];
+};
+
+const PERSONAL_ATTACHMENT_ACCEPT = 'image/*,.pdf,application/pdf';
+
+const isSupportedBatchAttachment = (file: File) => {
+    const lowerName = file.name.toLowerCase();
+    return file.type.startsWith('image/') || file.type === 'application/pdf' || lowerName.endsWith('.pdf');
+};
+
+const attachmentLabel = (mimeType: string) => {
+    if (mimeType === 'application/pdf') return 'PDF';
+    if (mimeType.startsWith('image/')) return 'Image';
+    return mimeType;
 };
 
 const statusConfig: Record<string, { bg: string; text: string; dot: string }> = {
@@ -79,6 +99,7 @@ export default function PersonalDetailPage() {
     const [batch, setBatch] = useState<Batch | null>(null);
     const [error, setError] = useState('');
     const [uploading, setUploading] = useState(false);
+    const [attachmentUploading, setAttachmentUploading] = useState(false);
     const [sending, setSending] = useState(false);
     const [dragOver, setDragOver] = useState(false);
 
@@ -168,6 +189,42 @@ export default function PersonalDetailPage() {
         setDragOver(false);
         const file = e.dataTransfer.files[0];
         if (file) handleUpload(file);
+    };
+
+    const handleAttachmentUpload = async (files: FileList | File[]) => {
+        const selectedFiles = Array.from(files);
+        if (selectedFiles.length === 0) return;
+
+        const invalidFile = selectedFiles.find((file) => !isSupportedBatchAttachment(file));
+        if (invalidFile) {
+            setError('Please upload only images or PDF files as batch attachments.');
+            return;
+        }
+
+        setAttachmentUploading(true);
+        setError('');
+        try {
+            for (const file of selectedFiles) {
+                const formData = new FormData();
+                formData.append('file', file);
+                await api.upload(`/personal-messages/${id}/attachments`, formData);
+            }
+            await load();
+        } catch (err: any) {
+            setError(err.message || 'Failed to upload attachments');
+        } finally {
+            setAttachmentUploading(false);
+        }
+    };
+
+    const handleRemoveAttachment = async (filename: string) => {
+        setError('');
+        try {
+            await api.del(`/personal-messages/${id}/attachments/${filename}`);
+            await load();
+        } catch (err: any) {
+            setError(err.message || 'Failed to remove attachment');
+        }
     };
 
     const handleSaveLimit = async () => {
@@ -298,6 +355,7 @@ export default function PersonalDetailPage() {
     const bsc = batchStatusConfig[batch.status] || batchStatusConfig.DRAFT;
     const progress = batch.total > 0 ? Math.round(((batch.sent + batch.failed) / batch.total) * 100) : 0;
     const canUpload = batch.status === 'DRAFT';
+    const canManageAttachments = batch.status === 'DRAFT' || batch.status === 'FAILED';
     const canSend = (batch.status === 'DRAFT' || batch.status === 'FAILED') && batch.items.length > 0;
 
     return (
@@ -381,6 +439,83 @@ export default function PersonalDetailPage() {
                     <p className="text-dark-5 text-xs mt-2">Sets this subject on all items in the batch.</p>
                 </div>
             )}
+
+            <div className="rounded-2xl bg-surface p-5 shadow-1 border border-stroke/60 mb-6">
+                <div className="flex flex-wrap items-start justify-between gap-3 mb-3">
+                    <div>
+                        <p className="text-sm font-medium text-dark">Batch Attachments</p>
+                        <p className="text-dark-5 text-xs mt-1">
+                            These files are sent with every message in this batch. Supported formats: images and PDFs.
+                        </p>
+                    </div>
+                    {canManageAttachments && (
+                        <label className="inline-flex items-center gap-2 text-xs font-medium text-primary hover:text-accent cursor-pointer transition-colors">
+                            {attachmentUploading ? 'Uploading...' : '+ Add files'}
+                            <input
+                                type="file"
+                                accept={PERSONAL_ATTACHMENT_ACCEPT}
+                                multiple
+                                onChange={(e) => {
+                                    const files = e.target.files;
+                                    if (files?.length) {
+                                        handleAttachmentUpload(files);
+                                    }
+                                    e.target.value = '';
+                                }}
+                                className="hidden"
+                            />
+                        </label>
+                    )}
+                </div>
+
+                {batch.attachments.length > 0 ? (
+                    <div className="grid gap-3 sm:grid-cols-2">
+                        {batch.attachments.map((attachment) => {
+                            const isPdf = attachment.mimeType === 'application/pdf';
+                            return (
+                                <div
+                                    key={attachment.filename}
+                                    className="flex items-center gap-3 rounded-xl border border-stroke/60 bg-surface-2 px-4 py-3"
+                                >
+                                    <div className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-xl ${isPdf ? 'bg-red/10 text-red' : 'bg-primary/10 text-primary'}`}>
+                                        {isPdf ? (
+                                            <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
+                                                <path strokeLinecap="round" strokeLinejoin="round" d="M19.5 14.25v-8.625a1.125 1.125 0 0 0-1.125-1.125H8.25m11.25 9.75-2.963-2.963a1.125 1.125 0 0 0-1.591 0L10.5 15.75m-1.5-10.125H5.625A1.125 1.125 0 0 0 4.5 6.75v10.5c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125v-3.75" />
+                                            </svg>
+                                        ) : (
+                                            <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
+                                                <path strokeLinecap="round" strokeLinejoin="round" d="m2.25 15.75 5.159-5.159a2.25 2.25 0 0 1 3.182 0L15 15m-1.5-1.5 1.409-1.409a2.25 2.25 0 0 1 3.182 0L21.75 15.75m-16.5-9h13.5A2.25 2.25 0 0 1 21 9v9.75A2.25 2.25 0 0 1 18.75 21H5.25A2.25 2.25 0 0 1 3 18.75V9a2.25 2.25 0 0 1 2.25-2.25Zm3.75 3h.008v.008H9v-.008Z" />
+                                            </svg>
+                                        )}
+                                    </div>
+                                    <div className="min-w-0 flex-1">
+                                        <p className="truncate text-sm font-medium text-dark">{attachment.originalName}</p>
+                                        <p className="text-xs text-dark-5">{attachmentLabel(attachment.mimeType)}</p>
+                                    </div>
+                                    {canManageAttachments && (
+                                        <button
+                                            onClick={() => handleRemoveAttachment(attachment.filename)}
+                                            className="text-xs font-medium text-red hover:text-red/80 transition-colors"
+                                        >
+                                            Remove
+                                        </button>
+                                    )}
+                                </div>
+                            );
+                        })}
+                    </div>
+                ) : (
+                    <div className="rounded-xl border border-dashed border-stroke bg-surface-2/60 px-4 py-5 text-sm text-dark-5">
+                        No batch attachments yet.
+                    </div>
+                )}
+
+                {!canManageAttachments && (
+                    <p className="text-dark-5 text-xs mt-3">
+                        Attachments are locked once delivery has started so every recipient keeps the same asset set.
+                    </p>
+                )}
+            </div>
 
             {/* Live Terminal Logs */}
             {logs.length > 0 && (
