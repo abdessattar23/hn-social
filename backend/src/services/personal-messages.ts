@@ -604,7 +604,7 @@ const ACCEPTANCE_TEMPLATE = (firstName: string, _eventName: string, referralCode
 <p><strong>Start:</strong> April 25, 11:00 AM Boston time (ET)<br/>
 Local meetups will begin earlier so participants can get to know each other before the kick-off.<br/>
 <strong>Agenda:</strong> <a href="http://hack-nation.ai">hack-nation.ai</a><br/>
-<strong>Info slide deck:</strong> <a href="https://docs.google.com/presentation/d/1h4KUEFSUm1FSdWRYI-7Er022F2qYx5JW/edit?slide=id.p1#slide=id.p1">Download the slide deck</a><br/>
+<strong>Info slide deck:</strong> <a href="https://drive.google.com/file/d/1WW485XOMrPW_WKt2QbpKl2t7ap_d4VNN/view">Download the slide deck</a><br/>
 <strong>Local hubs:</strong> MIT, Stanford, Oxford, ETH Zurich, Munich, and more.<br/>
 We'll share the finalized hub list and instructions on how to join in the next email.<br/>
 <strong>Zoom link for the kick-off:</strong> will be sent shortly before the event via email.</p>
