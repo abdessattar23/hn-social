@@ -505,25 +505,39 @@ async function fetchAllRows<T>(baseQuery: any): Promise<T[]> {
 
 // ── Application Email Sync ─────────────────────────────────────────────
 
-const ACCEPTANCE_TEMPLATE = (firstName: string, eventName: string) => ({
-    subject: `🎉 Congratulations — You're In! | ${eventName}`,
-    body: `Hi ${firstName},
+const ACCEPTANCE_TEMPLATE = (firstName: string, _eventName: string) => ({
+    subject: "Congratulations - You're In! | 5th Hack-Nation Global AI Hackathon",
+    body: `Dear ${firstName},
+Congratulations – you’ve been selected to join the 5th Hack-Nation Global AI Hackathon, hosted in collaboration with the MIT Sloan AI Club, taking place April 25–26, 2026, both virtually and in person at several local hubs.
+Start: April 25, 11:00 AM Boston time (ET)
+Local meetups will begin earlier so participants can get to know each other before the kick-off.
+Agenda: http://hack-nation.ai
+Info slide deck: click here to download: https://docs.google.com/presentation/d/1h4KUEFSUm1FSdWRYI-7Er022F2qYx5JW/edit?slide=id.p1#slide=id.p1
+Local hubs: MIT, Stanford, Oxford, ETH Zurich, Munich, and more.
+We’ll share the finalized hub list and instructions on how to join in the next email.
+Zoom link for the kick-off: will be sent shortly before the event via email.
 
-We're thrilled to inform you that your application to ${eventName} has been accepted! 🎉
+Three actions required:
+👉 Please RSVP on Luma by Sunday, March 15, to secure your spot: https://luma.com/7v8s6xlw?coupon=0LPLM2
+When registering, please use your private access code: 0LPLM2
+(Please keep this code private and do not share it with others.)
+👉 Download the image to share and celebrate your acceptance on social media. Tag us on LinkedIn or Instagram hacknation.globalai
+👉 Refer cracked AI builders – your referral code: «Referral_code_5th_hackathon»
+What’s at stake:
+$30k+ in API credits and cash prizes.
+$150k+ API credits available during Hack.
+Winning teams may be selected for the venture track to launch their AI startup, run in collaboration with EWOR, one of Europe’s leading startup builders.
+No idea is required beforehand – the AI challenges will be revealed on hackathon day. We’ll send more details soon about keynotes, challenge tracks, and how to make the most of the experience.
 
-You've been selected from a competitive pool of applicants, and we can't wait to see what you'll build.
-
-Here's what happens next:
-• You'll receive a signup code shortly to create your account on our platform
-• Join our community channels to connect with other participants
-• Start forming your team if you haven't already
-
-If you have any questions, don't hesitate to reach out.
-
-See you at ${eventName}! 🚀
-
-Best regards,
-The Hack-Nation Team`,
+Have an amazing week and see you soon!
+Linn & the Hack-Nation Team
+--
+Linn Bieske
+MIT Leaders for Global Operations (LGO) Fellow
+MBA/MS Electrical Engineering & Computer Science
+Mobile: +1 857 867 0556
+lbieske@mit.edu
+https://www.linkedin.com/in/linn-bieske-189b9b138/`,
 });
 
 const REJECTION_TEMPLATE = (firstName: string, eventName: string) => ({
