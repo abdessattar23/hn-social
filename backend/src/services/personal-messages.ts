@@ -600,7 +600,7 @@ async function ensurePersonalReferralCodes(applications: ApplicationRow[]): Prom
 const ACCEPTANCE_TEMPLATE = (firstName: string, _eventName: string, referralCode: string) => ({
     subject: "Congratulations - You're In! | 5th Hack-Nation Global AI Hackathon",
     body: `<p>Dear ${firstName},</p>
-<p>Congratulations - you've been selected to join the <span style="color:#c62828;font-weight:700;">5th Hack-Nation Global AI Hackathon</span>, hosted in collaboration with the MIT Sloan AI Club, taking place April 25-26, 2026, both virtually and in person at several local hubs.</p>
+<p>Congratulations - you've been selected to join the <span style="color:#1f4e79;font-weight:700;">5th Hack-Nation Global AI Hackathon</span>, hosted in collaboration with the MIT Sloan AI Club, taking place April 25-26, 2026, both virtually and in person at several local hubs.</p>
 <p><strong>Start:</strong> April 25, 11:00 AM Boston time (ET)<br/>
 Local meetups will begin earlier so participants can get to know each other before the kick-off.<br/>
 <strong>Agenda:</strong> <a href="http://hack-nation.ai">hack-nation.ai</a><br/>
