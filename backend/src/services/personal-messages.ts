@@ -505,7 +505,99 @@ async function fetchAllRows<T>(baseQuery: any): Promise<T[]> {
 
 // ── Application Email Sync ─────────────────────────────────────────────
 
-const ACCEPTANCE_TEMPLATE = (firstName: string, _eventName: string) => ({
+const PERSONAL_REFERRAL_CODE_PREFIX = "Hack-with-";
+const PERSONAL_REFERRAL_CODE_MIN_SUFFIX = 1000;
+const PERSONAL_REFERRAL_CODE_MAX_SUFFIX = 9999;
+const PERSONAL_REFERRAL_CODE_ATTEMPTS = 100;
+
+function normalizePersonalReferralCode(value: string | null | undefined): string | null {
+    const trimmed = value?.trim();
+    return trimmed ? trimmed : null;
+}
+
+function buildPersonalReferralStem(firstName: string): string {
+    const cleaned = firstName
+        .normalize("NFD")
+        .replace(/[\u0300-\u036f]/g, "")
+        .replace(/[^a-z0-9]+/gi, "")
+        .toLowerCase();
+
+    if (!cleaned) return "Applicant";
+    return `${cleaned.charAt(0).toUpperCase()}${cleaned.slice(1)}`;
+}
+
+function generatePersonalReferralCode(firstName: string, usedCodes: Set<string>): string {
+    const stem = buildPersonalReferralStem(firstName);
+
+    for (let attempt = 0; attempt < PERSONAL_REFERRAL_CODE_ATTEMPTS; attempt += 1) {
+        const suffix = Math.floor(
+            Math.random() * (PERSONAL_REFERRAL_CODE_MAX_SUFFIX - PERSONAL_REFERRAL_CODE_MIN_SUFFIX + 1),
+        ) + PERSONAL_REFERRAL_CODE_MIN_SUFFIX;
+        const candidate = `${PERSONAL_REFERRAL_CODE_PREFIX}${stem}-${suffix}`;
+
+        if (!usedCodes.has(candidate)) {
+            return candidate;
+        }
+    }
+
+    throw new BadRequestError(`Could not generate unique referral code for ${firstName || "applicant"}`);
+}
+
+interface ApplicationRow {
+    id: string;
+    first_name: string;
+    last_name: string;
+    email: string;
+    personal_referral_code: string | null;
+}
+
+async function ensurePersonalReferralCodes(applications: ApplicationRow[]): Promise<Map<string, string>> {
+    const codesByApplicationId = new Map<string, string>();
+    const missing = applications.filter((application) => {
+        const existing = normalizePersonalReferralCode(application.personal_referral_code);
+        if (existing) {
+            codesByApplicationId.set(application.id, existing);
+            return false;
+        }
+        return true;
+    });
+
+    if (missing.length === 0) return codesByApplicationId;
+
+    const { data: existingRows, error } = await db
+        .from("hackathon_applications")
+        .select("personal_referral_code")
+        .not("personal_referral_code", "is", null);
+    if (error) throw new BadRequestError(error.message);
+
+    const usedCodes = new Set<string>();
+    for (const row of existingRows || []) {
+        const code = normalizePersonalReferralCode((row as { personal_referral_code?: string | null }).personal_referral_code);
+        if (code) usedCodes.add(code);
+    }
+
+    const updates = missing.map((application) => {
+        const generated = generatePersonalReferralCode(application.first_name, usedCodes);
+        usedCodes.add(generated);
+        codesByApplicationId.set(application.id, generated);
+        return {
+            id: application.id,
+            code: generated,
+        };
+    });
+
+    for (const update of updates) {
+        const { error: updateError } = await db
+            .from("hackathon_applications")
+            .update({ personal_referral_code: update.code })
+            .eq("id", update.id);
+        if (updateError) throw new BadRequestError(updateError.message);
+    }
+
+    return codesByApplicationId;
+}
+
+const ACCEPTANCE_TEMPLATE = (firstName: string, _eventName: string, referralCode: string) => ({
     subject: "Congratulations - You're In! | 5th Hack-Nation Global AI Hackathon",
     body: `<p>Dear ${firstName},</p>
 <p>Congratulations - you've been selected to join the <span style="color:#c62828;font-weight:700;">5th Hack-Nation Global AI Hackathon</span>, hosted in collaboration with the MIT Sloan AI Club, taking place April 25-26, 2026, both virtually and in person at several local hubs.</p>
@@ -522,7 +614,7 @@ We'll share the finalized hub list and instructions on how to join in the next e
 When registering, please use your private access code: <strong>0LPLM2</strong>.<br/>
 <em>Please keep this code private and do not share it with others.</em></li>
 <li>Download the image to share and celebrate your acceptance on social media. Tag us on LinkedIn or Instagram <strong>hacknation.globalai</strong>.</li>
-<li>Refer cracked AI builders - your referral code: <strong>«Referral_code_5th_hackathon»</strong>.</li>
+<li>Refer cracked AI builders - your referral code: <strong>${referralCode}</strong>.</li>
 </ol>
 <p><strong>What's at stake:</strong></p>
 <ul>
@@ -596,16 +688,13 @@ export async function syncFromApplications(
         ? ADMISSION_BATCHES.filter((b) => batchNumbers.includes(b.number))
         : [];
 
-    // Fetch applications filtered by status + date range
-    interface ApplicationRow { id: string; first_name: string; last_name: string; email: string }
-
     let applications: ApplicationRow[];
     if (selectedBatches.length > 0) {
         const batchResults = await Promise.all(
             selectedBatches.map((batch) => {
                 const q = db
                     .from("hackathon_applications")
-                    .select("id, first_name, last_name, email")
+                    .select("id, first_name, last_name, email, personal_referral_code")
                     .eq(statusField, statusValue)
                     .gte("timestamp", `${batch.applicationStart}T00:00:00.000Z`)
                     .lte("timestamp", `${batch.commsDeadline}T23:59:59.999Z`);
@@ -626,7 +715,7 @@ export async function syncFromApplications(
         // No batch filter — use event date range (original behavior)
         let query = db
             .from("hackathon_applications")
-            .select("id, first_name, last_name, email")
+            .select("id, first_name, last_name, email, personal_referral_code")
             .eq(statusField, statusValue);
 
         if (event) {
@@ -679,11 +768,24 @@ export async function syncFromApplications(
     }
     console.log(`[SyncApplications] Batch created: id=${batch.id} sync_target_status=${batch.sync_target_status}`);
 
+    const referralCodesByApplicationId = isAccepted
+        ? await ensurePersonalReferralCodes(applications)
+        : new Map<string, string>();
+
     // Generate items with dynamic event name in templates
-    const templateFn = isAccepted ? ACCEPTANCE_TEMPLATE : REJECTION_TEMPLATE;
     const items = applications.map((app) => {
         const firstName = app.first_name || "Applicant";
-        const tmpl = templateFn(firstName, eventName);
+        const referralCode = referralCodesByApplicationId.get(app.id);
+        if (isAccepted && !referralCode) {
+            throw new BadRequestError(`Missing personal referral code for application ${app.id}`);
+        }
+        const tmpl = isAccepted
+            ? ACCEPTANCE_TEMPLATE(
+                firstName,
+                eventName,
+                referralCode!,
+            )
+            : REJECTION_TEMPLATE(firstName, eventName);
         return {
             personal_message_id: batch.id,
             recipient_name: `${app.first_name || ""} ${app.last_name || ""}`.trim() || app.email,
