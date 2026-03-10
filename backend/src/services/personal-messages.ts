@@ -600,7 +600,7 @@ async function ensurePersonalReferralCodes(applications: ApplicationRow[]): Prom
 const ACCEPTANCE_TEMPLATE = (firstName: string, _eventName: string, referralCode: string) => ({
     subject: "Congratulations - You're In! | 5th Hack-Nation Global AI Hackathon",
     body: `<p>Dear ${firstName},</p>
-<p>Congratulations - you've been selected to join the <span style="color:#1f4e79;font-weight:700;">5th Hack-Nation Global AI Hackathon</span>, hosted in collaboration with the MIT Sloan AI Club, taking place April 25-26, 2026, both virtually and in person at several local hubs.</p>
+<p>Congratulations - you've been selected to join the <span style="color:#c62828;font-weight:700;">5th Hack-Nation Global AI Hackathon</span>, hosted in collaboration with the MIT Sloan AI Club, taking place April 25-26, 2026, both virtually and in person at several local hubs.</p>
 <p><strong>Start:</strong> April 25, 11:00 AM Boston time (ET)<br/>
 Local meetups will begin earlier so participants can get to know each other before the kick-off.<br/>
 <strong>Agenda:</strong> <a href="http://hack-nation.ai">hack-nation.ai</a><br/>
@@ -610,11 +610,11 @@ We'll share the finalized hub list and instructions on how to join in the next e
 <strong>Zoom link for the kick-off:</strong> will be sent shortly before the event via email.</p>
 <p><strong>Three actions required:</strong></p>
 <ol>
-<li>Please RSVP on Luma by Sunday, March 15, to secure your spot: <a href="https://luma.com/7v8s6xlw?coupon=0LPLM2">RSVP on Luma</a>.<br/>
+<li><strong>Please RSVP</strong> on Luma by Sunday, March 15, to secure your spot: <a href="https://luma.com/7v8s6xlw?coupon=0LPLM2">RSVP on Luma</a>.<br/>
 When registering, please use your private access code: <strong>0LPLM2</strong>.<br/>
 <em>Please keep this code private and do not share it with others.</em></li>
-<li>Download the image to share and celebrate your acceptance on social media. Tag us on LinkedIn or Instagram <strong>hacknation.globalai</strong>.</li>
-<li>Refer cracked AI builders - your referral code: <strong>${referralCode}</strong>.</li>
+<li><strong>Download</strong> the image to share and celebrate your acceptance on social media. Tag us on <a href="https://www.linkedin.com/in/linn-bieske-189b9b138/">LinkedIn</a> or <a href="https://www.instagram.com/hacknation.globalai/">Instagram</a>.</li>
+<li><strong>Refer</strong> cracked AI builders - your referral code: <strong>${referralCode}</strong>.</li>
 </ol>
 <p><strong>What's at stake:</strong></p>
 <ul>
