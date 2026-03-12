@@ -260,6 +260,12 @@ async function purgeAttachmentAssets(
 // ── CSV Column Detection ───────────────────────────────────────────────
 
 const CSV_MAX_PAYLOAD_BYTES = 5 * 1024 * 1024;
+const CSV_DELIMITER_CANDIDATES = [",", ";", "\t", "|"] as const;
+const RECOVERABLE_CSV_ERROR_CODES = new Set([
+    "UndetectableDelimiter",
+    "TooFewFields",
+    "TooManyFields",
+]);
 
 interface CsvColumnMapping {
     name: string;
@@ -296,6 +302,106 @@ function detectColumns(
         message: headers[messageIdx],
         subject: subjectIdx !== -1 ? headers[subjectIdx] : undefined,
     };
+}
+
+function normalizeCsvContent(csvContent: string): string {
+    return csvContent
+        .replace(/^\uFEFF/, "")
+        .replace(/\u0000/g, "")
+        .replace(/\r\n/g, "\n")
+        .replace(/\r/g, "\n");
+}
+
+function describeDelimiter(delimiter: string): string {
+    if (delimiter === ",") return "comma";
+    if (delimiter === ";") return "semicolon";
+    if (delimiter === "\t") return "tab";
+    if (delimiter === "|") return "pipe";
+    return "custom";
+}
+
+function buildCsvParseErrorMessage(
+    error: { message: string; row?: number | string | undefined },
+    delimiter: string,
+): string {
+    const numericRow = typeof error.row === "number" && Number.isFinite(error.row)
+        ? ` at row ${error.row}`
+        : "";
+    return `CSV parse error${numericRow} using ${describeDelimiter(delimiter)} delimiter: ${error.message}`;
+}
+
+function looksLikePlainTextList(csvContent: string): boolean {
+    const lines = csvContent
+        .split("\n")
+        .map((line) => line.trim())
+        .filter(Boolean)
+        .slice(0, 5);
+
+    if (lines.length < 2) return false;
+    return lines.every((line) => !/[,\t;|]/.test(line));
+}
+
+function hasMeaningfulCsvValue(value: unknown): boolean {
+    if (typeof value === "string") return value.trim() !== "";
+    if (Array.isArray(value)) return value.some((entry) => hasMeaningfulCsvValue(entry));
+    return value !== null && value !== undefined;
+}
+
+function parseStructuredCsv(csvContent: string): {
+    rows: Record<string, string>[];
+    mapping: CsvColumnMapping;
+} {
+    const normalizedContent = normalizeCsvContent(csvContent);
+    let firstMeaningfulError: string | null = null;
+
+    for (const delimiter of CSV_DELIMITER_CANDIDATES) {
+        const parsed = Papa.parse<Record<string, string>>(normalizedContent, {
+            header: true,
+            delimiter,
+            skipEmptyLines: "greedy",
+            transformHeader: (header: string) => header.replace(/^\uFEFF/, "").trim(),
+        });
+
+        const rows = (parsed.data || []).filter((row) =>
+            row && Object.values(row).some((value) => hasMeaningfulCsvValue(value)),
+        );
+        const headers = (parsed.meta.fields || [])
+            .map((header) => header.trim())
+            .filter(Boolean);
+
+        if (headers.length === 0) continue;
+
+        try {
+            const mapping = detectColumns(headers);
+            const fatalErrors = parsed.errors.filter((error) => {
+                const code = (error as { code?: string }).code;
+                return !code || !RECOVERABLE_CSV_ERROR_CODES.has(code);
+            });
+
+            if (fatalErrors.length > 0) {
+                throw new BadRequestError(buildCsvParseErrorMessage(fatalErrors[0], delimiter));
+            }
+
+            return { rows, mapping };
+        } catch (error) {
+            if (error instanceof BadRequestError) {
+                firstMeaningfulError ||= error.message;
+                continue;
+            }
+            throw error;
+        }
+    }
+
+    if (looksLikePlainTextList(normalizedContent)) {
+        throw new BadRequestError(
+            "This file looks like a plain text list, not a structured CSV. Please provide columns: name, identifier, message, and optionally subject.",
+        );
+    }
+
+    throw new BadRequestError(
+        firstMeaningfulError ||
+        "Could not parse this file. Please upload a UTF-8 CSV/TSV with columns: name, identifier, message, and optionally subject.",
+    );
 }
 
 // ── CRUD ───────────────────────────────────────────────────────────────
@@ -605,10 +711,9 @@ const ACCEPTANCE_TEMPLATE = (firstName: string, _eventName: string, referralCode
 Local meetups will begin earlier so participants can get to know each other before the kick-off.<br/>
 <strong>Agenda:</strong> <a href="http://hack-nation.ai">hack-nation.ai</a><br/>
 <strong>Info slide deck:</strong> <a href="https://drive.google.com/file/d/1WW485XOMrPW_WKt2QbpKl2t7ap_d4VNN/view">Download the slide deck</a><br/>
-<strong>Local hubs:</strong> MIT, Stanford, Oxford, ETH Zurich, Munich, and more.<br/>
-We'll share the finalized hub list and instructions on how to join in the next email.<br/>
-<strong>On April 10,</strong> we will send out confirmations indicating whether we can offer you an in-person spot at one of our hubs or whether you will be waitlisted for the hub.<br/>
-<strong>In any case, you are already accepted to participate online</strong>, so you will definitely be able to join the hackathon.<br/>
+<strong>Local hubs:</strong> MIT, Stanford, Oxford, ETH Zurich, Munich, and more. Spots in our in-person hubs are limited.<br/>
+We will reach out to you with next steps regarding registration.<br/>
+<strong>Nonetheless:</strong> You have already been accepted to participate online, so you will definitely be able to join the hackathon.<br/>
 <strong>Zoom link for the kick-off:</strong> will be sent shortly before the event via email.</p>
 <p><strong>Three actions required:</strong></p>
 <ol>
@@ -626,14 +731,11 @@ When registering, please use your <strong>private access code: 0LPLM2</strong>.<
 </ul>
 <p><strong>No idea is required beforehand - the AI challenges will be revealed on hackathon day.</strong> We'll send more details soon about keynotes, challenge tracks, and how to make the most of the experience.</p>
 <p>Have an amazing week and see you soon!</p>
-<p>Linn &amp; the Hack-Nation Team</p>
-<p>--<br/>
-Linn Bieske<br/>
-MIT Leaders for Global Operations (LGO) Fellow<br/>
-MBA/MS Electrical Engineering &amp; Computer Science<br/>
-Mobile: +1 857 867 0556<br/>
-<a href="mailto:lbieske@mit.edu">lbieske@mit.edu</a><br/>
-<a href="https://www.linkedin.com/in/linn-bieske-189b9b138/">LinkedIn</a></p>`,
+<p>Kai &amp; the Hack-Nation Team</p>
+<p>__<br/>
+Kai Nestor Wiederhold<br/>
+CEO Hack-Nation | MIT Class of '25<br/>
+Linkedin: <a href="https://www.linkedin.com/in/kaiw/">https://www.linkedin.com/in/kaiw/</a></p>`,
 });
 
 const REJECTION_TEMPLATE = (firstName: string, eventName: string) => ({
@@ -848,22 +950,8 @@ export async function importCsv(
     if (new Blob([csvContent]).size > CSV_MAX_PAYLOAD_BYTES)
         throw new BadRequestError("CSV file too large (max 5MB)");
 
-    const parsed = Papa.parse(csvContent, {
-        header: true,
-        skipEmptyLines: true,
-        transformHeader: (h: string) => h.trim(),
-    });
-
-    if (parsed.errors.length > 0) {
-        const firstError = parsed.errors[0];
-        throw new BadRequestError(`CSV parse error at row ${firstError.row}: ${firstError.message}`);
-    }
-
-    const rows = parsed.data as Record<string, string>[];
+    const { rows, mapping } = parseStructuredCsv(csvContent);
     if (rows.length === 0) throw new BadRequestError("CSV contains no data rows");
-
-    const headers = Object.keys(rows[0]);
-    const mapping = detectColumns(headers);
 
     const items = rows
         .map((row) => ({

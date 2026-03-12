@@ -72,14 +72,46 @@ const channelBadge = (ch: string) => {
     return 'bg-linkedin-light text-linkedin';
 };
 
-function MessageCell({ text }: { text: string }) {
+function MessageCell({ text, renderHtml = false }: { text: string; renderHtml?: boolean }) {
     const [expanded, setExpanded] = useState(false);
     const isLong = text.length > 120;
+    const supportsHtmlPreview = renderHtml && /<\/?[a-z][\s\S]*>/i.test(text);
+    const [viewMode, setViewMode] = useState<'preview' | 'html'>('preview');
+
+    const showRenderedPreview = supportsHtmlPreview && viewMode === 'preview';
+
     return (
         <div className="max-w-[350px]">
-            <div className={expanded ? 'whitespace-pre-line text-xs leading-relaxed' : 'line-clamp-2 text-xs'}>
-                {text}
-            </div>
+            {supportsHtmlPreview && (
+                <div className="mb-2 inline-flex items-center gap-1 rounded-lg border border-stroke bg-surface-2 p-1 text-[11px]">
+                    <button
+                        type="button"
+                        onClick={() => setViewMode('preview')}
+                        className={`rounded-md px-2 py-1 font-medium transition-colors ${viewMode === 'preview' ? 'bg-surface text-dark shadow-sm' : 'text-dark-5 hover:text-dark'}`}
+                    >
+                        Preview
+                    </button>
+                    <button
+                        type="button"
+                        onClick={() => setViewMode('html')}
+                        className={`rounded-md px-2 py-1 font-medium transition-colors ${viewMode === 'html' ? 'bg-surface text-dark shadow-sm' : 'text-dark-5 hover:text-dark'}`}
+                    >
+                        HTML
+                    </button>
+                </div>
+            )}
+
+            {showRenderedPreview ? (
+                <div
+                    className={`overflow-hidden rounded-xl border border-stroke/70 bg-surface-2/40 p-3 text-xs text-dark shadow-inner ${expanded ? 'max-h-none' : 'max-h-28'} prose prose-sm max-w-none [&_a]:text-primary [&_a]:underline [&_ol]:my-2 [&_ol]:pl-5 [&_p]:my-2 [&_ul]:my-2 [&_ul]:pl-5`}
+                    dangerouslySetInnerHTML={{ __html: text }}
+                />
+            ) : (
+                <div className={expanded ? 'whitespace-pre-line text-xs leading-relaxed break-words' : 'line-clamp-2 text-xs break-words'}>
+                    {text}
+                </div>
+            )}
+
             {isLong && (
                 <button
                     onClick={() => setExpanded(!expanded)}
@@ -166,8 +198,8 @@ export default function PersonalDetailPage() {
     }, [authed, load]);
 
     const handleUpload = async (file: File) => {
-        if (!file.name.endsWith('.csv')) {
-            setError('Please upload a .csv file');
+        if (!/\.(csv|tsv|txt)$/i.test(file.name)) {
+            setError('Please upload a .csv, .tsv, or .txt file');
             return;
         }
         setUploading(true);
@@ -569,7 +601,7 @@ export default function PersonalDetailPage() {
                     <input
                         ref={fileInputRef}
                         type="file"
-                        accept=".csv"
+                        accept=".csv,.tsv,.txt"
                         onChange={(e) => {
                             const file = e.target.files?.[0];
                             if (file) handleUpload(file);
@@ -586,7 +618,7 @@ export default function PersonalDetailPage() {
                         {uploading ? 'Uploading...' : 'Drop your CSV here or click to browse'}
                     </p>
                     <p className="text-dark-5 text-sm">
-                        CSV should have columns: <code className="text-primary">name</code>, <code className="text-primary">identifier</code> (email/phone/chat ID), <code className="text-primary">message</code>{batch.channel === 'EMAIL' && <>, and optionally <code className="text-primary">subject</code></>}
+                        CSV/TSV should have columns: <code className="text-primary">name</code>, <code className="text-primary">identifier</code> (email/phone/chat ID), <code className="text-primary">message</code>{batch.channel === 'EMAIL' && <>, and optionally <code className="text-primary">subject</code></>}. Comma, semicolon, and tab-separated exports are supported.
                     </p>
                 </div>
             )}
@@ -768,7 +800,10 @@ export default function PersonalDetailPage() {
                                                 <td className="px-5 py-3 text-dark-5">{item.subject || '—'}</td>
                                             )}
                                             <td className="px-5 py-3 text-dark-5">
-                                                <MessageCell text={item.message_body} />
+                                                <MessageCell
+                                                    text={item.message_body}
+                                                    renderHtml={batch.channel === 'EMAIL'}
+                                                />
                                             </td>
                                             <td className="px-5 py-3">
                                                 <span className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-md text-xs font-medium ${isc.bg} ${isc.text}`}>
