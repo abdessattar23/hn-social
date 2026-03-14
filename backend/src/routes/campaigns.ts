@@ -97,6 +97,12 @@ campaignsRouter.post("/:id/cancel", async (c) => {
   return c.json(result);
 });
 
+campaignsRouter.get("/:id/logs", async (c) => {
+  const id = extractNumericParam(c);
+  const logs = orchestrator.getCampaignLogs(id);
+  return c.json({ logs });
+});
+
 campaignsRouter.post("/:id/send", async (c) => {
   const user = resolveUserContext(c);
   const id = extractNumericParam(c);

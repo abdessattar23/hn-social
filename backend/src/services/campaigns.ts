@@ -19,6 +19,37 @@ const CHANNEL_THROTTLE_DEFAULTS: Record<string, ThrottlePolicy> = {
   LINKEDIN: createThrottlePolicy("LINKEDIN"),
 };
 
+// ── In-Memory Campaign Logs ────────────────────────────────────────────
+
+interface CampaignLogEntry {
+  timestamp: string;
+  level: 'info' | 'warn' | 'error' | 'success';
+  message: string;
+}
+
+const campaignLogs = new Map<number, CampaignLogEntry[]>();
+
+function emitCampaignLog(campaignId: number, level: CampaignLogEntry['level'], message: string) {
+  if (!campaignLogs.has(campaignId)) campaignLogs.set(campaignId, []);
+  const entry = { timestamp: new Date().toISOString(), level, message };
+  campaignLogs.get(campaignId)!.push(entry);
+  console.log(`[Campaign ${campaignId}] [${entry.timestamp}] ${message}`);
+}
+
+export function getCampaignLogs(campaignId: number): CampaignLogEntry[] {
+  return campaignLogs.get(campaignId) || [];
+}
+
+function cleanupOldCampaignLogs() {
+  const oneHourAgo = Date.now() - 3600_000;
+  for (const [id, logs] of campaignLogs.entries()) {
+    if (logs.length > 0 && new Date(logs[logs.length - 1].timestamp).getTime() < oneHourAgo) {
+      campaignLogs.delete(id);
+    }
+  }
+}
+setInterval(cleanupOldCampaignLogs, 600_000);
+
 interface CampaignAggregateProjection {
   id: number;
   name: string;
@@ -294,7 +325,7 @@ async function resolveSignatureForChannel(
     if (signature) {
       return baseBody + "<br/><br/>--<br/>" + signature;
     }
-  } catch {}
+  } catch { }
   return baseBody;
 }
 
@@ -359,8 +390,8 @@ async function executePropagationPipeline(
     halted: false,
   };
 
-  console.log(
-    `[Campaign ${campaign.id}] Starting: "${campaign.name}" | channel=${channelType} | total=${campaign.total} | delay=${throttlePolicy.minIntervalMs}-${throttlePolicy.maxIntervalMs}ms`,
+  emitCampaignLog(campaign.id, 'info',
+    `Starting campaign "${campaign.name}" | channel=${channelType} | total=${campaign.total} | delay=${throttlePolicy.minIntervalMs}-${throttlePolicy.maxIntervalMs}ms`,
   );
 
   const enrichedBody = await resolveSignatureForChannel(
@@ -398,11 +429,12 @@ async function executePropagationPipeline(
       );
       if (alreadyDispatched) {
         context.sentCount++;
+        emitCampaignLog(campaign.id, 'info', `${context.processedCount}/${campaign.total} Skipped (already sent) → ${contact.name || contact.identifier}`);
         continue;
       }
 
-      console.log(
-        `[Campaign ${campaign.id}] Sending ${context.processedCount}/${campaign.total} to ${contact.identifier} via ${channelType}`,
+      emitCampaignLog(campaign.id, 'info',
+        `${context.processedCount}/${campaign.total} Sending to ${contact.name || contact.identifier} via ${channelType}...`,
       );
 
       const result = await dispatchToRecipient(
@@ -415,13 +447,13 @@ async function executePropagationPipeline(
 
       if (result.status === "SENT") {
         context.sentCount++;
-        console.log(
-          `[Campaign ${campaign.id}] ${context.processedCount}/${campaign.total} SENT`,
+        emitCampaignLog(campaign.id, 'success',
+          `${context.processedCount}/${campaign.total} ✓ Sent to ${contact.name || contact.identifier}`,
         );
       } else {
         context.failedCount++;
-        console.error(
-          `[Campaign ${campaign.id}] ${context.processedCount}/${campaign.total} FAILED: ${result.error}`,
+        emitCampaignLog(campaign.id, 'error',
+          `${context.processedCount}/${campaign.total} ✗ Failed: ${contact.name || contact.identifier} — ${result.error}`,
         );
       }
 
@@ -460,8 +492,8 @@ async function executePropagationPipeline(
         failed: context.failedCount,
       })
       .eq("id", campaign.id);
-    console.log(
-      `[Campaign ${campaign.id}] Stopped after ${elapsedSeconds}s: ${context.sentCount} sent, ${context.failedCount} failed`,
+    emitCampaignLog(campaign.id, 'warn',
+      `Campaign stopped after ${elapsedSeconds}s: ${context.sentCount} sent, ${context.failedCount} failed`,
     );
   } else {
     const finalStatus =
@@ -476,8 +508,8 @@ async function executePropagationPipeline(
         failed: context.failedCount,
       })
       .eq("id", campaign.id);
-    console.log(
-      `[Campaign ${campaign.id}] Complete in ${elapsedSeconds}s: ${context.sentCount} sent, ${context.failedCount} failed`,
+    emitCampaignLog(campaign.id, 'success',
+      `Campaign complete in ${elapsedSeconds}s: ${context.sentCount} sent, ${context.failedCount} failed`,
     );
   }
 

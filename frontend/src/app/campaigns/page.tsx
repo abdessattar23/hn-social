@@ -1,5 +1,5 @@
 'use client';
-import { useEffect, useState, useMemo, useRef } from 'react';
+import { useEffect, useState, useMemo, useRef, useCallback } from 'react';
 import { api } from '@/lib/api';
 import { useRequireAuth } from '@/lib/useRequireAuth';
 import Link from 'next/link';
@@ -42,16 +42,44 @@ export default function CampaignsPage() {
   const [loadError, setLoadError] = useState('');
   const popoverRef = useRef<HTMLDivElement>(null);
 
+  // Live logs for sending campaigns
+  type LogEntry = { timestamp: string; level: string; message: string };
+  const [campaignLogs, setCampaignLogs] = useState<Record<number, LogEntry[]>>({});
+  const [expandedLogId, setExpandedLogId] = useState<number | null>(null);
+  const logEndRef = useRef<HTMLDivElement>(null);
+  const logPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
   useEffect(() => {
     if (!authed) return;
     load();
   }, [authed]);
 
   useEffect(() => {
-    const needsPoll = campaigns.some((c) => c.status === 'SENDING' || c.status === 'SCHEDULED');
-    if (!needsPoll) return;
-    const timer = setInterval(load, 3000);
-    return () => clearInterval(timer);
+    const sendingCampaigns = campaigns.filter((c) => c.status === 'SENDING' || c.status === 'SCHEDULED');
+    if (sendingCampaigns.length === 0) {
+      if (logPollRef.current) { clearInterval(logPollRef.current); logPollRef.current = null; }
+      return;
+    }
+    const pollAll = () => {
+      load();
+      sendingCampaigns.filter(c => c.status === 'SENDING').forEach((c) => {
+        api.get(`/campaigns/${c.id}/logs`)
+          .then((d: any) => {
+            setCampaignLogs(prev => ({ ...prev, [c.id]: d.logs || [] }));
+            setTimeout(() => logEndRef.current?.scrollIntoView({ behavior: 'smooth' }), 100);
+          })
+          .catch(() => { });
+      });
+    };
+    pollAll();
+    logPollRef.current = setInterval(pollAll, 1500);
+    return () => { if (logPollRef.current) { clearInterval(logPollRef.current); logPollRef.current = null; } };
+  }, [campaigns.map(c => `${c.id}:${c.status}`).join(',')]);
+
+  // Auto-expand log for first sending campaign
+  useEffect(() => {
+    const sending = campaigns.find(c => c.status === 'SENDING');
+    if (sending && expandedLogId == null) setExpandedLogId(sending.id);
   }, [campaigns]);
 
   useEffect(() => {
@@ -254,6 +282,56 @@ export default function CampaignsPage() {
                           >
                             Export failed
                           </button>
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {/* Live Terminal Logs */}
+                  {(c.status === 'SENDING' || (campaignLogs[c.id]?.length ?? 0) > 0) && (
+                    <div className="mb-3">
+                      <button
+                        onClick={(e) => { e.stopPropagation(); setExpandedLogId(expandedLogId === c.id ? null : c.id); }}
+                        className="text-xs text-dark-5 hover:text-primary flex items-center gap-1 transition-colors mb-2"
+                      >
+                        <svg className={`w-3 h-3 transition-transform ${expandedLogId === c.id ? 'rotate-90' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M8.25 4.5l7.5 7.5-7.5 7.5" />
+                        </svg>
+                        Dispatch Log ({campaignLogs[c.id]?.length || 0} entries)
+                      </button>
+                      {expandedLogId === c.id && (
+                        <div className="rounded-xl overflow-hidden border border-stroke/60">
+                          <div className="bg-[#1a1a2e] px-4 py-2 flex items-center justify-between">
+                            <div className="flex items-center gap-2">
+                              <div className="flex gap-1.5">
+                                <span className="w-2.5 h-2.5 rounded-full bg-red/80" />
+                                <span className="w-2.5 h-2.5 rounded-full bg-yellow-400/80" />
+                                <span className="w-2.5 h-2.5 rounded-full bg-green/80" />
+                              </div>
+                              <span className="text-gray-400 text-[10px] font-mono ml-1">dispatch.log</span>
+                            </div>
+                            {c.status === 'SENDING' && (
+                              <span className="text-green text-[10px] font-mono animate-pulse">● LIVE</span>
+                            )}
+                          </div>
+                          <div className="bg-[#16213e] max-h-[200px] overflow-y-auto px-4 py-2 font-mono text-[11px] leading-relaxed">
+                            {(campaignLogs[c.id] || []).map((log, i) => {
+                              const time = new Date(log.timestamp).toLocaleTimeString();
+                              const colors: Record<string, string> = {
+                                info: 'text-blue-300',
+                                warn: 'text-yellow-300',
+                                error: 'text-red-400',
+                                success: 'text-green-400',
+                              };
+                              return (
+                                <div key={i} className="flex gap-2">
+                                  <span className="text-gray-500 shrink-0">{time}</span>
+                                  <span className={colors[log.level] || 'text-gray-300'}>{log.message}</span>
+                                </div>
+                              );
+                            })}
+                            <div ref={expandedLogId === c.id ? logEndRef : null} />
+                          </div>
                         </div>
                       )}
                     </div>
