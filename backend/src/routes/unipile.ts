@@ -312,6 +312,25 @@ unipileRouter.get("/whatsapp/chats", async (c) => {
     (allChats.items || []) as Record<string, unknown>[],
     orgAccountIds,
   );
+
+  // Enrich group names: Unipile sometimes sets `name` to the numeric provider_id.
+  // Check for alternative fields that contain the actual group name.
+  for (const chat of filtered) {
+    const name = (chat.name as string) || "";
+    const looksLikeId = /^\d{10,}/.test(name) || /@[gs]\.(us|whatsapp\.net)$/.test(name);
+    if (looksLikeId) {
+      const alt =
+        (chat.subject as string) ||
+        (chat.group_subject as string) ||
+        (chat.display_name as string) ||
+        (chat.title as string) ||
+        "";
+      if (alt && alt.trim()) {
+        chat.name = alt.trim();
+      }
+    }
+  }
+
   return c.json({ items: filtered });
 });
 

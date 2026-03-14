@@ -60,19 +60,19 @@ const constructDefaultColumnDetector =
 
 const constructWhatsAppGroupDetector =
   (): ((row: Record<string, string>) => string) =>
-  (row) => {
-    const value =
-      row.name ||
-      row.Name ||
-      row.group ||
-      row.Group ||
-      row["Group Name"] ||
-      row["group name"] ||
-      row["Group name"] ||
-      Object.values(row)[0] ||
-      "";
-    return value.trim();
-  };
+    (row) => {
+      const value =
+        row.name ||
+        row.Name ||
+        row.group ||
+        row.Group ||
+        row["Group Name"] ||
+        row["group name"] ||
+        row["Group name"] ||
+        Object.values(row)[0] ||
+        "";
+      return value.trim();
+    };
 
 const materializeAudienceManifest = (
   id: number,
@@ -386,38 +386,212 @@ lists.post("/:id/import-whatsapp-csv", async (c) => {
     orgAccountIds.has(chat.account_id as string),
   );
 
-  const groupNamesLower = groupNames.map((n) => n.toLowerCase());
   const existingIdentifiers = new Set(
     (manifest.contacts || []).map((c: any) => c.identifier),
   );
 
-  const matchedContacts: NormalizedContactPayload[] = [];
+  // ── Normalization helpers ──
+  const stripEmoji = (s: string) =>
+    s.replace(
+      /[\u{1F600}-\u{1F64F}\u{1F300}-\u{1F5FF}\u{1F680}-\u{1F6FF}\u{1F1E0}-\u{1F1FF}\u{2600}-\u{26FF}\u{2700}-\u{27BF}\u{FE00}-\u{FE0F}\u{1F900}-\u{1F9FF}\u{1FA00}-\u{1FA6F}\u{1FA70}-\u{1FAFF}\u{200D}\u{20E3}\u{E0020}-\u{E007F}]/gu,
+      "",
+    );
+  const normalize = (s: string) =>
+    stripEmoji(s)
+      .toLowerCase()
+      .replace(/[''`´]/g, "'")
+      .replace(/[|·—–\-_/\\]/g, " ")
+      .replace(/[^\w\s'@&.+]/g, "")
+      .replace(/\s+/g, " ")
+      .trim();
+
+  const levenshtein = (a: string, b: string): number => {
+    if (a.length === 0) return b.length;
+    if (b.length === 0) return a.length;
+    const matrix: number[][] = [];
+    for (let i = 0; i <= b.length; i++) matrix[i] = [i];
+    for (let j = 0; j <= a.length; j++) matrix[0][j] = j;
+    for (let i = 1; i <= b.length; i++) {
+      for (let j = 1; j <= a.length; j++) {
+        const cost = b[i - 1] === a[j - 1] ? 0 : 1;
+        matrix[i][j] = Math.min(
+          matrix[i - 1][j] + 1,
+          matrix[i][j - 1] + 1,
+          matrix[i - 1][j - 1] + cost,
+        );
+      }
+    }
+    return matrix[b.length][a.length];
+  };
+
+  // ── Build chat lookup structures ──
+  type ChatEntry = { chat: Record<string, unknown>; lower: string; normalized: string };
+  const chatEntries: ChatEntry[] = [];
+  const chatsByExact = new Map<string, Record<string, unknown>>();
 
   for (const chat of orgFilteredChats) {
-    const chatName = ((chat.name as string) || "").trim().toLowerCase();
-    if (
-      chatName &&
-      groupNamesLower.includes(chatName) &&
-      !existingIdentifiers.has(chat.id as string)
-    ) {
-      matchedContacts.push({
-        name: (chat.name as string) || "",
-        identifier: chat.id as string,
-        list_id: id,
-      });
+    const rawName = ((chat.name as string) || "").trim();
+    if (!rawName) continue;
+    const lower = rawName.toLowerCase();
+    const norm = normalize(rawName);
+    chatEntries.push({ chat, lower, normalized: norm });
+    if (!chatsByExact.has(lower)) chatsByExact.set(lower, chat);
+  }
+
+  // ── Multi-strategy matcher ──
+  type MatchStrategy = "exact" | "normalized" | "contains" | "words" | "levenshtein";
+
+  // Only consider words with 3+ chars to avoid common short words like "AI", "x", "at"
+  const extractWords = (s: string) =>
+    s.split(/\s+/).filter((w) => w.length >= 3);
+
+  const wordOverlapScore = (a: string[], b: string[]): number => {
+    if (a.length === 0 || b.length === 0) return 0;
+    const shorter = a.length <= b.length ? a : b;
+    const longer = a.length <= b.length ? b : a;
+    const longerSet = new Set(longer);
+    const matched = shorter.filter((w) => longerSet.has(w)).length;
+    return matched / shorter.length;
+  };
+
+  const findBestMatch = (
+    csvName: string,
+  ): { chat: Record<string, unknown>; strategy: MatchStrategy } | null => {
+    const csvLower = csvName.toLowerCase();
+    const csvNorm = normalize(csvName);
+
+    // Strategy 1: Exact lowercase match
+    const exact = chatsByExact.get(csvLower);
+    if (exact) return { chat: exact, strategy: "exact" };
+
+    // Strategy 2: Normalized match (strip emoji, special chars, collapse whitespace)
+    for (const entry of chatEntries) {
+      if (entry.normalized === csvNorm && csvNorm.length > 0) {
+        return { chat: entry.chat, strategy: "normalized" };
+      }
+    }
+
+    // Strategy 3: Substring containment (either direction, min 8 chars, length ratio within 2x)
+    if (csvNorm.length >= 8) {
+      for (const entry of chatEntries) {
+        if (entry.normalized.length < 8) continue;
+        const ratio = Math.max(csvNorm.length, entry.normalized.length) /
+          Math.min(csvNorm.length, entry.normalized.length);
+        if (ratio > 2) continue;
+        if (entry.normalized.includes(csvNorm) || csvNorm.includes(entry.normalized)) {
+          return { chat: entry.chat, strategy: "contains" };
+        }
+      }
+    }
+
+    // Strategy 4: Word overlap (≥80% of words from shorter string found in longer, min 3 words)
+    const csvWords = extractWords(csvNorm);
+    if (csvWords.length >= 3) {
+      let bestScore = 0;
+      let bestChat: Record<string, unknown> | null = null;
+      for (const entry of chatEntries) {
+        const entryWords = extractWords(entry.normalized);
+        if (entryWords.length < 3) continue;
+        const score = wordOverlapScore(csvWords, entryWords);
+        if (score >= 0.8 && score > bestScore) {
+          bestScore = score;
+          bestChat = entry.chat;
+        }
+      }
+      if (bestChat) return { chat: bestChat, strategy: "words" };
+    }
+
+    // Strategy 5: Levenshtein distance (max 25% of longer string, min 8 chars)
+    if (csvNorm.length >= 8) {
+      let bestDist = Infinity;
+      let bestChat: Record<string, unknown> | null = null;
+      for (const entry of chatEntries) {
+        if (entry.normalized.length < 8) continue;
+        const maxLen = Math.max(csvNorm.length, entry.normalized.length);
+        const threshold = Math.floor(maxLen * 0.25);
+        const dist = levenshtein(csvNorm, entry.normalized);
+        if (dist <= threshold && dist < bestDist) {
+          bestDist = dist;
+          bestChat = entry.chat;
+        }
+      }
+      if (bestChat) return { chat: bestChat, strategy: "levenshtein" };
+    }
+
+    return null;
+  };
+
+  // ── Match each CSV row ──
+  type GroupSyncDetail = {
+    csvName: string;
+    status: "synced" | "already_exists" | "not_found";
+    matchedChatName?: string;
+    chatId?: string;
+    matchStrategy?: MatchStrategy;
+  };
+
+  const details: GroupSyncDetail[] = [];
+  const contactsToInsert: NormalizedContactPayload[] = [];
+  const usedChatIds = new Set<string>();
+
+  for (const csvName of groupNames) {
+    const match = findBestMatch(csvName);
+
+    if (!match) {
+      details.push({ csvName, status: "not_found" });
+    } else {
+      const chatId = match.chat.id as string;
+      const chatName = (match.chat.name as string) || "";
+
+      if (existingIdentifiers.has(chatId)) {
+        details.push({
+          csvName,
+          status: "already_exists",
+          matchedChatName: chatName,
+          chatId,
+          matchStrategy: match.strategy,
+        });
+      } else if (usedChatIds.has(chatId)) {
+        // Duplicate CSV row pointing at same chat — treat as already_exists
+        details.push({
+          csvName,
+          status: "already_exists",
+          matchedChatName: chatName,
+          chatId,
+          matchStrategy: match.strategy,
+        });
+      } else {
+        contactsToInsert.push({
+          name: chatName,
+          identifier: chatId,
+          list_id: id,
+        });
+        existingIdentifiers.add(chatId);
+        usedChatIds.add(chatId);
+        details.push({
+          csvName,
+          status: "synced",
+          matchedChatName: chatName,
+          chatId,
+          matchStrategy: match.strategy,
+        });
+      }
     }
   }
 
-  if (matchedContacts.length) {
+  if (contactsToInsert.length) {
     const { error: insErr } = await db
       .from("contacts")
-      .insert(matchedContacts);
+      .insert(contactsToInsert);
     if (insErr) throw new BadRequestError(insErr.message);
   }
 
   return c.json({
-    imported: matchedContacts.length,
+    imported: contactsToInsert.length,
+    alreadyExisted: details.filter((d) => d.status === "already_exists").length,
+    notFound: details.filter((d) => d.status === "not_found").length,
     total: groupNames.length,
+    details,
   });
 });
 

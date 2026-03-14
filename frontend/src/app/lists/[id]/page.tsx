@@ -11,10 +11,12 @@ type Contact = { id: number; name: string; identifier: string };
 type List = { id: number; name: string; type: string; tags: string[]; contacts: Contact[] };
 type ChatAttendee = { id?: string; display_name?: string; name?: string; provider_id?: string };
 type Chat = { id: string; name: string | null; provider_id?: string; attendees?: ChatAttendee[]; title?: string };
+type GroupSyncDetail = { csvName: string; status: 'synced' | 'already_exists' | 'not_found'; matchedChatName?: string; chatId?: string; matchStrategy?: 'exact' | 'normalized' | 'contains' | 'words' | 'levenshtein' };
+type SyncReport = { imported: number; alreadyExisted: number; notFound: number; total: number; details: GroupSyncDetail[] };
 
 function chatDisplayName(c: Chat): string {
-  // Use explicit name if available and meaningful
-  if (c.name && c.name !== 'Chat' && !/^[A-Za-z0-9_-]{10,}$/.test(c.name)) return c.name;
+  // Use explicit name if available and meaningful (skip raw IDs like 120363...@g.us)
+  if (c.name && c.name !== 'Chat' && !/^[A-Za-z0-9_-]{10,}$/.test(c.name) && !/@[gs]\.(us|whatsapp\.net)$/.test(c.name) && !/^\d{10,}/.test(c.name)) return c.name;
   // Use chat title (group chats)
   if (c.title) return c.title;
   // Extract from attendees (LinkedIn, etc.)
@@ -52,6 +54,9 @@ export default function ListDetailPage() {
   const [deleting, setDeleting] = useState(false);
   const [bypassLimit, setBypassLimit] = useState(false);
   const [splitResult, setSplitResult] = useState<{ imported: number; split?: boolean; dailySendLimit?: number; lists: Array<{ id: number; name: string; count: number }> } | null>(null);
+  const [syncReport, setSyncReport] = useState<SyncReport | null>(null);
+  const [retrying, setRetrying] = useState(false);
+  const [retryEdits, setRetryEdits] = useState<Record<number, string>>({});
 
   useEffect(() => {
     if (!authed) return;
@@ -99,6 +104,7 @@ export default function ListDetailPage() {
     if (!file) return;
     setError('');
     setSplitResult(null);
+    setSyncReport(null);
     try {
       const form = new FormData();
       form.append('file', file);
@@ -107,7 +113,9 @@ export default function ListDetailPage() {
         ? `/lists/${id}/import-whatsapp-csv`
         : `/lists/${id}/import-csv${bypassLimit ? '?bypass_limit=true' : ''}`;
       const result = await api.upload(endpoint, form);
-      if (result.split && result.lists?.length > 0) {
+      if (isWhatsApp && result.details) {
+        setSyncReport(result as SyncReport);
+      } else if (result.split && result.lists?.length > 0) {
         setSplitResult(result);
       } else {
         alert(`Imported ${result.imported} contacts`);
@@ -200,7 +208,7 @@ export default function ListDetailPage() {
       await Promise.all([...selected].map((cid) => api.del(`/lists/${id}/contacts/${cid}`)));
       setSelected(new Set());
       load();
-    } catch {}
+    } catch { }
     setDeleting(false);
   };
 
@@ -255,6 +263,166 @@ export default function ListDetailPage() {
         </div>
       )}
 
+      {/* WhatsApp Sync Report */}
+      {syncReport && (() => {
+        const notFoundNames = syncReport.details.filter((d) => d.status === 'not_found').map((d) => d.csvName);
+
+        const retryNotFound = async (names: string[], originalCsvName?: string) => {
+          if (names.length === 0 || retrying) return;
+          setRetrying(true);
+          setError('');
+          try {
+            const csvContent = 'Group Name\n' + names.join('\n');
+            const blob = new Blob([csvContent], { type: 'text/csv' });
+            const form = new FormData();
+            form.append('file', blob, 'retry.csv');
+            const result = await api.upload(`/lists/${id}/import-whatsapp-csv`, form);
+            if (result.details) {
+              const retryResult = result as SyncReport;
+              // If retrying a single item with a custom name, map results back to original csvName
+              const retryMap = new Map<string, GroupSyncDetail>();
+              if (originalCsvName && names.length === 1) {
+                const retryDetail = retryResult.details[0];
+                if (retryDetail) retryMap.set(originalCsvName, { ...retryDetail, csvName: originalCsvName });
+              } else {
+                retryResult.details.forEach((d: GroupSyncDetail) => retryMap.set(d.csvName, d));
+              }
+              const mergedDetails = syncReport.details.map((d) =>
+                d.status === 'not_found' && retryMap.has(d.csvName) ? retryMap.get(d.csvName)! : d
+              );
+              const newImported = mergedDetails.filter((d) => d.status === 'synced').length;
+              const newAlreadyExisted = mergedDetails.filter((d) => d.status === 'already_exists').length;
+              const newNotFound = mergedDetails.filter((d) => d.status === 'not_found').length;
+              setSyncReport({ imported: newImported, alreadyExisted: newAlreadyExisted, notFound: newNotFound, total: mergedDetails.length, details: mergedDetails });
+              setRetryEdits({});
+              load();
+            }
+          } catch (err: any) {
+            setError(err.message || 'Retry failed');
+          }
+          setRetrying(false);
+        };
+
+        return (
+          <div className="rounded-2xl bg-surface border border-stroke/60 shadow-1 p-5 mb-6">
+            <div className="flex items-start justify-between mb-4">
+              <div>
+                <h3 className="text-sm font-semibold text-dark mb-1">CSV Sync Report</h3>
+                <div className="flex gap-3 text-xs">
+                  {syncReport.imported > 0 && (
+                    <span className="flex items-center gap-1 text-green font-medium">
+                      <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}><path strokeLinecap="round" strokeLinejoin="round" d="M4.5 12.75l6 6 9-13.5" /></svg>
+                      {syncReport.imported} synced
+                    </span>
+                  )}
+                  {syncReport.alreadyExisted > 0 && (
+                    <span className="flex items-center gap-1 text-blue font-medium">
+                      <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}><path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m9-.75a9 9 0 1 1-18 0 9 9 0 0 1 18 0Zm-9 3.75h.008v.008H12v-.008Z" /></svg>
+                      {syncReport.alreadyExisted} already existed
+                    </span>
+                  )}
+                  {syncReport.notFound > 0 && (
+                    <span className="flex items-center gap-1 text-red font-medium">
+                      <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}><path strokeLinecap="round" strokeLinejoin="round" d="M6 18 18 6M6 6l12 12" /></svg>
+                      {syncReport.notFound} not found
+                    </span>
+                  )}
+                </div>
+              </div>
+              <div className="flex items-center gap-2 shrink-0 ml-3">
+                {notFoundNames.length > 0 && (
+                  <button
+                    onClick={() => retryNotFound(notFoundNames)}
+                    disabled={retrying}
+                    className="flex items-center gap-1.5 text-xs font-medium text-primary hover:text-accent bg-primary/5 hover:bg-primary/10 rounded-lg px-3 py-1.5 transition-colors disabled:opacity-50"
+                  >
+                    <svg className={`w-3.5 h-3.5 ${retrying ? 'animate-spin' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0 3.181 3.183a8.25 8.25 0 0 0 13.803-3.7M4.031 9.865a8.25 8.25 0 0 1 13.803-3.7l3.181 3.182M2.985 14.652" /></svg>
+                    {retrying ? 'Retrying...' : `Retry all (${notFoundNames.length})`}
+                  </button>
+                )}
+                <button onClick={() => setSyncReport(null)} className="text-dark-5 hover:text-dark transition-colors">
+                  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M6 18 18 6M6 6l12 12" /></svg>
+                </button>
+              </div>
+            </div>
+            <div className="max-h-[40vh] overflow-y-auto space-y-0.5">
+              {syncReport.details.map((d, i) => (
+                <div
+                  key={i}
+                  className={`flex items-center gap-3 px-3.5 py-2.5 rounded-lg text-sm ${d.status === 'synced'
+                    ? 'bg-green/5'
+                    : d.status === 'already_exists'
+                      ? 'bg-blue/5'
+                      : 'bg-red/5'
+                    }`}
+                >
+                  {d.status === 'synced' && (
+                    <span className="flex items-center justify-center w-5 h-5 rounded-full bg-green/15 text-green shrink-0">
+                      <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}><path strokeLinecap="round" strokeLinejoin="round" d="M4.5 12.75l6 6 9-13.5" /></svg>
+                    </span>
+                  )}
+                  {d.status === 'already_exists' && (
+                    <span className="flex items-center justify-center w-5 h-5 rounded-full bg-blue/15 text-blue shrink-0">
+                      <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}><path strokeLinecap="round" strokeLinejoin="round" d="M19.5 12h-15" /></svg>
+                    </span>
+                  )}
+                  {d.status === 'not_found' && (
+                    <span className="flex items-center justify-center w-5 h-5 rounded-full bg-red/15 text-red shrink-0">
+                      <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}><path strokeLinecap="round" strokeLinejoin="round" d="M6 18 18 6M6 6l12 12" /></svg>
+                    </span>
+                  )}
+                  <span className="flex-1 text-dark truncate" title={d.csvName}>{d.csvName}</span>
+                  {d.matchedChatName && d.matchedChatName.toLowerCase() !== d.csvName.toLowerCase() && (
+                    <span className="text-xs text-dark-5 truncate max-w-[200px]" title={d.matchedChatName}>→ {d.matchedChatName}</span>
+                  )}
+                  {d.matchStrategy && d.matchStrategy !== 'exact' && (
+                    <span className="text-[10px] text-dark-6 bg-surface-2 rounded px-1.5 py-0.5 shrink-0">
+                      {d.matchStrategy === 'normalized' ? 'normalized' : d.matchStrategy === 'contains' ? 'partial' : d.matchStrategy === 'words' ? 'words' : 'fuzzy'}
+                    </span>
+                  )}
+                  {d.status === 'not_found' && (
+                    <div className="flex items-center gap-1.5 shrink-0">
+                      <input
+                        type="text"
+                        placeholder="Search name..."
+                        value={retryEdits[i] ?? ''}
+                        onChange={(e) => setRetryEdits((prev) => ({ ...prev, [i]: e.target.value }))}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') {
+                            const searchName = (retryEdits[i] || '').trim() || d.csvName;
+                            retryNotFound([searchName], d.csvName);
+                          }
+                        }}
+                        className="border border-stroke rounded px-2 py-1 text-xs w-[140px] outline-none focus:border-primary bg-surface-2 transition"
+                      />
+                      <button
+                        onClick={() => {
+                          const searchName = (retryEdits[i] || '').trim() || d.csvName;
+                          retryNotFound([searchName], d.csvName);
+                        }}
+                        disabled={retrying}
+                        className="text-dark-5 hover:text-primary shrink-0 transition-colors disabled:opacity-50"
+                        title="Retry with this search name"
+                      >
+                        <svg className={`w-3.5 h-3.5 ${retrying ? 'animate-spin' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-5.197-5.197m0 0A7.5 7.5 0 1 0 5.196 5.196a7.5 7.5 0 0 0 10.607 10.607Z" /></svg>
+                      </button>
+                    </div>
+                  )}
+                  <span className={`text-xs font-medium px-2 py-0.5 rounded-md shrink-0 ${d.status === 'synced'
+                    ? 'bg-green/10 text-green'
+                    : d.status === 'already_exists'
+                      ? 'bg-blue/10 text-blue'
+                      : 'bg-red/10 text-red'
+                    }`}>
+                    {d.status === 'synced' ? 'Synced' : d.status === 'already_exists' ? 'Already exists' : 'Not found'}
+                  </span>
+                </div>
+              ))}
+            </div>
+          </div>
+        );
+      })()}
+
       {/* Empty state */}
       {(list.contacts?.length || 0) === 0 && !showChatPicker && (
         <div className="rounded-2xl bg-surface p-8 shadow-1 mb-6 text-center">
@@ -262,8 +430,8 @@ export default function ListDetailPage() {
             {list.type === 'EMAIL'
               ? 'Add email contacts to this list. You can add them one by one or import a CSV.'
               : list.type === 'WHATSAPP'
-              ? 'Add WhatsApp groups to this list. Select from your connected groups or import a CSV.'
-              : 'Add LinkedIn contacts to this list. Select from your connections or import a CSV.'}
+                ? 'Add WhatsApp groups to this list. Select from your connected groups or import a CSV.'
+                : 'Add LinkedIn contacts to this list. Select from your connections or import a CSV.'}
           </p>
           <div className="flex gap-3 justify-center items-center">
             <label className="bg-gray-2 text-dark-5 rounded-lg px-4 py-2 text-sm cursor-pointer hover:bg-gray-3 transition-colors">
